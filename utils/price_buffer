@@ -1,0 +1,15 @@
+# utils/price_buffer.py
+
+from collections import deque
+
+class PriceBuffer:
+    def __init__(self, max_len=100):
+        self.prices = deque(maxlen=max_len)
+        self.timestamps = deque(maxlen=max_len)
+
+    def add(self, price, timestamp):
+        self.prices.append(price)
+        self.timestamps.append(timestamp)
+
+    def get_data(self):
+        return list(self.timestamps), list(self.prices)
