@@ -1,37 +1,38 @@
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+import time
 
 class PriceChart:
-    def __init__(self, market_data, price_buffer):
+    def __init__(self, market_data, buffer, symbol="BTCUSDT"):
         self.market_data = market_data
-        self.price_buffer = price_buffer
+        self.buffer = buffer
+        self.symbol = symbol
 
         self.fig, self.ax = plt.subplots()
-        self.line, = self.ax.plot([], [], linewidth=2)
+        self.line, = self.ax.plot([], [])
 
         self.ax.set_title("Bitcoin Price (BTC/USDT)")
-        self.ax.set_xlabel("Time")
-        self.ax.set_ylabel("Price (USDT)")
+        self.ax.set_xlabel("Tempo")
+        self.ax.set_ylabel("Preço (USDT)")
         self.ax.grid(True)
 
-    def update(self, frame):
-        price = self.market_data.get_btc_price()
-        timestamp = self.market_data.get_timestamp()
-
-        self.price_buffer.add(price, timestamp)
-
-        x, y = self.price_buffer.get_data()
-
-        self.line.set_data(range(len(y)), y)
-        self.ax.set_xlim(0, len(y))
-        self.ax.set_ylim(min(y) * 0.999, max(y) * 1.001)
-
-        return self.line,
-
     def run(self):
-        animation = FuncAnimation(
-            self.fig,
-            self.update,
-            interval=5000  # atualiza a cada 5 segundos
-        )
+        plt.ion()  # modo interativo
         plt.show()
+
+        while True:
+            try:
+                preco = self.market_data.pegar_preco_atual(self.symbol)
+                print("Preço capturado:", preco)
+
+                self.buffer.add(preco)
+                dados = self.buffer.get_all()
+
+                self.line.set_data(range(len(dados)), dados)
+                self.ax.relim()
+                self.ax.autoscale_view()
+
+                plt.pause(1)  # atualiza a cada 1 segundo
+
+            except Exception as e:
+                print("Erro ao atualizar gráfico:", e)
+                time.sleep(2)
