@@ -19,7 +19,6 @@ class MainWindow(ctk.CTk):
 
         self.title("Automação Bitcoin")
         self.geometry("1200x720")
-        self.configure(fg_color="#1e1f22")
         self.bot_running = False
 
         self.dados = []
@@ -29,6 +28,7 @@ class MainWindow(ctk.CTk):
 
     def _criar_layout(self):
 
+        # ================= HEADER =================
         header = ctk.CTkFrame(self, fg_color="#2a2d31", corner_radius=15)
         header.pack(fill="x", padx=20, pady=15)
 
@@ -39,43 +39,6 @@ class MainWindow(ctk.CTk):
         )
         self.preco_label.pack(side="left", padx=20, pady=15)
 
-        body = ctk.CTkFrame(self, fg_color="#1e1f22")
-        body.pack(fill="both", expand=True, padx=20, pady=10)
-
-        body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=1)
-        body.grid_rowconfigure(0, weight=1)
-
-        footer = ctk.CTkFrame(self, fg_color="#2a2d31", corner_radius=15)
-        footer.pack(fill="x", padx=20, pady=10)
-
-
-        self.chart_frame = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15)
-        self.chart_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
-
-        self.valor_entry = ctk.CTkEntry(footer, placeholder_text="Valor por trade (USDT)")
-        self.valor_entry.pack(side="left", padx=10)
-
-        self.percent_entry = ctk.CTkEntry(footer, placeholder_text="% Variação")
-        self.percent_entry.pack(side="left", padx=10)
-
-        self.trade_count = tk.Spinbox(footer, from_=1, to=100)
-        self.trade_count.pack()
-
-        self.bot_switch = ctk.CTkSwitch(
-        footer,
-        text="BOT OFF",
-        command=self.toggle_bot)
-        self.bot_switch.pack(side="left", padx=20)
-
-
-        self.mode_label = ctk.CTkLabel(
-        footer,
-        text="MODO: SIMULAÇÃO",
-        text_color="yellow"
-        )
-        self.mode_label.pack(side="right", padx=20)
-
         self.lucro_label = ctk.CTkLabel(
             header,
             text="Lucro Hoje: $0.00",
@@ -83,15 +46,94 @@ class MainWindow(ctk.CTk):
         )
         self.lucro_label.pack(side="right", padx=20)
 
+        # ================= BODY =================
+        body = ctk.CTkFrame(self, fg_color="#1e1f22")
+        body.pack(fill="both", expand=True, padx=20, pady=10)
 
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
+        # ================= GRÁFICO =================
+        self.chart_frame = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15)
+        self.chart_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
+
+        # ================= SIDE PANEL =================
         side_panel = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15)
-        side_panel.grid(row=0, column=1, sticky="nsew")
+        side_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
-        ctk.CTkButton(side_panel, text="INICIAR BOT",
-                      fg_color="#1f8f4e").pack(pady=20, padx=20, fill="x")
-        
-    
+        # ===== TÍTULO =====
+        titulo = ctk.CTkLabel(
+            side_panel,
+            text="CONFIGURAÇÃO DA ESTRATÉGIA",
+            font=("Arial", 16, "bold")
+        )
+        titulo.pack(pady=(20, 10))
+
+        # ===== VALOR DE ENTRADA =====
+        ctk.CTkLabel(side_panel, text="Valor de Entrada (USDT)").pack(pady=(10, 5))
+
+        self.entry_valor = tk.Spinbox(
+        side_panel,
+        from_=10,
+        to=10000,
+        increment=10,
+        width=10
+            )
+        self.entry_valor.pack(pady=5)
+
+
+        # ===== VALOR DE SAÍDA =====
+        ctk.CTkLabel(side_panel, text="Intervalo de Atuação (%)").pack(pady=(15, 5))
+
+        self.entry_intervalo = tk.Spinbox(
+            side_panel,
+            from_=0.1,
+            to=10,
+            increment=0.1,
+            width=10
+        )
+        self.entry_intervalo.pack(pady=5)
+
+
+        # ===== MODO AUTOMÁTICO =====
+        self.auto_switch = ctk.CTkSwitch(
+            side_panel,
+            text="Automático (Média Móvel)",
+        )
+        self.auto_switch.pack(pady=20)
+
+        # ===== BOTÃO INICIAR =====
+        ctk.CTkButton(
+            side_panel,
+            text="INICIAR BOT",
+            fg_color="#1f8f4e",
+            height=40
+        ).pack(pady=10, padx=20, fill="x")
+
+        # ===== QUANTIDADE DE TRADES =====
+        trades_container = ctk.CTkFrame(
+            side_panel,
+            fg_color="white",
+            corner_radius=10
+        )
+        trades_container.pack(pady=25, padx=20, fill="x")
+
+        ctk.CTkLabel(
+            trades_container,
+            text="QUANTIDADE DE TRADES",
+            text_color="black",
+            font=("Arial", 12, "bold")
+        ).pack(pady=(10, 5))
+
+        self.trades_label = ctk.CTkLabel(
+            trades_container,
+            text="0",
+            text_color="black",
+            font=("Arial", 24, "bold")
+        )
+        self.trades_label.pack(pady=(0, 15))
+
 
     def _criar_grafico(self):
 
