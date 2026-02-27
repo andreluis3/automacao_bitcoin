@@ -5,6 +5,8 @@ import random
 import numpy as np
 from CTkSpinbox import CTkSpinbox
 import tkinter as tk
+from interface.tabs.tab_performance import TabPerformance
+from interface.tabs.tab_saldo import TabSaldo
 
 
 
@@ -16,6 +18,7 @@ class MainWindow(ctk.CTk):
     def __init__(self, market_data):   # ← RECEBE AQUI
         super().__init__()
         self.market_data = market_data
+        self.preco_anterior = None
 
         self.title("Automação Bitcoin")
         self.geometry("1200x720")
@@ -34,8 +37,8 @@ class MainWindow(ctk.CTk):
 
         self.preco_label = ctk.CTkLabel(
             header,
-            text="BTC/USDT: --",
-            font=("Arial", 26, "bold")
+            text="BTC/USDT | Modo: CONSERVADOR | Saldo R$: 0.00 | Saldo BTC: 0.00000000 | Taxas: 0.00 | Drawdown: 0.00%",
+            font=("Arial", 20, "bold")
         )
         self.preco_label.pack(side="left", padx=20, pady=15)
 
@@ -53,6 +56,7 @@ class MainWindow(ctk.CTk):
         body.grid_columnconfigure(0, weight=3)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
+        body.grid_rowconfigure(1, weight=1)
 
         # ================= GRÁFICO =================
         self.chart_frame = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15)
@@ -103,6 +107,17 @@ class MainWindow(ctk.CTk):
         )
         self.auto_switch.pack(pady=20)
 
+        # ===== MODO DE OPERACAO (VISUAL) =====
+        ctk.CTkLabel(side_panel, text="Modo de Operação").pack(pady=(5, 5))
+        self.modo_operacao_combobox = ctk.CTkComboBox(
+            side_panel,
+            values=["Agressivo", "Conservador"],
+            state="readonly",
+            command=self._on_modo_operacao_change,
+        )
+        self.modo_operacao_combobox.pack(pady=(0, 10), padx=20, fill="x")
+        self.modo_operacao_combobox.set("Conservador")
+
         # ===== BOTÃO INICIAR =====
         ctk.CTkButton(
             side_panel,
@@ -134,6 +149,49 @@ class MainWindow(ctk.CTk):
         )
         self.trades_label.pack(pady=(0, 15))
 
+        # ================= NOVAS ABAS =================
+        self.tabview = ctk.CTkTabview(body)
+        self.tabview.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 5), pady=(12, 0))
+
+        self.tab_performance_container = self.tabview.add("Performance")
+        self.tab_saldo_container = self.tabview.add("Saldo")
+
+        self.tab_performance = TabPerformance(self.tab_performance_container)
+        self.tab_performance.pack(fill="both", expand=True, padx=8, pady=8)
+
+        self.tab_saldo = TabSaldo(self.tab_saldo_container)
+        self.tab_saldo.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def _on_modo_operacao_change(self, _valor: str) -> None:
+        if self.preco_anterior is not None:
+            self.atualizar_preco_btc(float(self.preco_anterior))
+
+    def _montar_header(self, preco: float | None, variacao_texto: str = "") -> str:
+        modo = (self.modo_operacao_combobox.get() if hasattr(self, "modo_operacao_combobox") else "Conservador").upper()
+        preco_texto = f"${preco:,.2f}" if preco is not None else "BTC/USDT"
+        sufixo = f" {variacao_texto}" if variacao_texto else ""
+        return (
+            f"BTC/USDT: {preco_texto}{sufixo} | Modo: {modo} | Saldo R$: 0.00 | "
+            f"Saldo BTC: 0.00000000 | Taxas: 0.00 | Drawdown: 0.00%"
+        )
+
+    def atualizar_preco_btc(self, novo_preco: float):
+        cor = "white"
+        variacao_texto = ""
+
+        if self.preco_anterior is not None and self.preco_anterior != 0:
+            variacao_percentual = ((novo_preco - self.preco_anterior) / self.preco_anterior) * 100
+            if variacao_percentual > 0:
+                variacao_texto = f"↑ +{variacao_percentual:.2f}%"
+                cor = "#22c55e"
+            elif variacao_percentual < 0:
+                variacao_texto = f"↓ {variacao_percentual:.2f}%"
+                cor = "#ef4444"
+            else:
+                variacao_texto = "0.00%"
+
+        self.preco_label.configure(text=self._montar_header(novo_preco, variacao_texto), text_color=cor)
+        self.preco_anterior = novo_preco
 
     def _criar_grafico(self):
 
@@ -164,7 +222,7 @@ class MainWindow(ctk.CTk):
 
         try:
             preco = self.market_data.pegar_preco_atual("BTCUSDT")
-            self.preco_label.configure(text=f"BTC/USDT: ${preco:,.2f}")
+            self.atualizar_preco_btc(preco)
 
             self.prices.append(preco)
 
@@ -213,7 +271,6 @@ class MainWindow(ctk.CTk):
 
     def executar_estrategia(self, preco):
         print("Bot executando estratégia no preço:", preco)
-
 
 
 
