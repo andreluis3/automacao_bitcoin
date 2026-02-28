@@ -7,6 +7,7 @@ from CTkSpinbox import CTkSpinbox
 import tkinter as tk
 from interface.tabs.tab_performance import TabPerformance
 from interface.tabs.tab_saldo import TabSaldo
+from interface.janela_simulacao import JanelaSimulacao
 
 
 
@@ -23,6 +24,7 @@ class MainWindow(ctk.CTk):
         self.title("Automação Bitcoin")
         self.geometry("1200x720")
         self.bot_running = False
+        self.janela_simulacao = None
 
         self.dados = []
         self._criar_layout()
@@ -120,6 +122,15 @@ class MainWindow(ctk.CTk):
         self.modo_operacao_combobox.pack(pady=(0, 10), padx=20, fill="x")
         self.modo_operacao_combobox.set("Conservador")
 
+        ctk.CTkButton(
+            side_panel,
+            text="Configurar Simulação",
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+            height=38,
+            command=self._abrir_janela_simulacao,
+        ).pack(pady=(8, 10), padx=20, fill="x")
+
         # ===== BOTÃO INICIAR =====
         ctk.CTkButton(
             side_panel,
@@ -167,6 +178,12 @@ class MainWindow(ctk.CTk):
     def _on_modo_operacao_change(self, _valor: str) -> None:
         if self.preco_anterior is not None:
             self.atualizar_preco_btc(float(self.preco_anterior))
+
+    def _abrir_janela_simulacao(self) -> None:
+        if self.janela_simulacao is not None and self.janela_simulacao.winfo_exists():
+            self.janela_simulacao.focus()
+            return
+        self.janela_simulacao = JanelaSimulacao(self)
 
     def _montar_header(self, preco: float | None, variacao_texto: str = "") -> str:
         modo = "PADRAO"
@@ -273,5 +290,4 @@ class MainWindow(ctk.CTk):
 
     def executar_estrategia(self, preco):
         print("Bot executando estratégia no preço:", preco)
-
 
