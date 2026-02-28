@@ -8,19 +8,12 @@ class TabSaldo(ctk.CTkFrame):
         self.frame_principal = ctk.CTkFrame(self, fg_color="#2a2d31", corner_radius=12)
         self.frame_principal.pack(fill="both", expand=True, padx=12, pady=12)
 
-        self.saldo_brl_label = ctk.CTkLabel(
-            self.frame_principal,
-            text="Saldo em R$: 0.00",
-            font=("Arial", 18, "bold"),
-        )
-        self.saldo_brl_label.pack(anchor="w", padx=16, pady=(16, 8))
-
         self.saldo_btc_label = ctk.CTkLabel(
             self.frame_principal,
             text="Saldo em BTC: 0.00000000",
             font=("Arial", 16),
         )
-        self.saldo_btc_label.pack(anchor="w", padx=16, pady=8)
+        self.saldo_btc_label.pack(anchor="w", padx=16, pady=(16, 8))
 
         self.taxas_label = ctk.CTkLabel(
             self.frame_principal,
@@ -28,10 +21,3 @@ class TabSaldo(ctk.CTkFrame):
             font=("Arial", 16),
         )
         self.taxas_label.pack(anchor="w", padx=16, pady=8)
-
-        self.drawdown_label = ctk.CTkLabel(
-            self.frame_principal,
-            text="Drawdown Atual: 0.00%",
-            font=("Arial", 16),
-        )
-        self.drawdown_label.pack(anchor="w", padx=16, pady=(8, 16))

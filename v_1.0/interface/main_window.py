@@ -33,28 +33,29 @@ class MainWindow(ctk.CTk):
 
         # ================= HEADER =================
         header = ctk.CTkFrame(self, fg_color="#2a2d31", corner_radius=15)
-        header.pack(fill="x", padx=20, pady=15)
+        header.pack(fill="x", padx=20, pady=(15, 6))
 
         self.preco_label = ctk.CTkLabel(
             header,
-            text="BTC/USDT | Modo: CONSERVADOR | Saldo R$: 0.00 | Saldo BTC: 0.00000000 | Taxas: 0.00 | Drawdown: 0.00%",
-            font=("Arial", 20, "bold")
+            text="BTC/USDT: --  Modo: PADRAO  Saldo R$: 0.00  Saldo BTC: 0.00000000  Taxas: 0.00  Drawdown Atual: 0.00%",
+            font=("Arial", 18, "bold")
         )
-        self.preco_label.pack(side="left", padx=20, pady=15)
+        self.preco_label.pack(side="left", padx=20, pady=14)
 
-        self.lucro_label = ctk.CTkLabel(
-            header,
-            text="Lucro Hoje: $0.00",
-            font=("Arial", 16)
+        self.grid_hibrido_label = ctk.CTkLabel(
+            self,
+            text="GRID HIBRIDO: OFF",
+            font=("Arial", 12),
+            text_color="#a1a1aa",
         )
-        self.lucro_label.pack(side="right", padx=20)
+        self.grid_hibrido_label.pack(anchor="w", padx=28, pady=(0, 8))
 
         # ================= BODY =================
         body = ctk.CTkFrame(self, fg_color="#1e1f22")
         body.pack(fill="both", expand=True, padx=20, pady=10)
 
-        body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=1)
+        body.grid_columnconfigure(0, weight=5)
+        body.grid_columnconfigure(1, weight=0, minsize=320)
         body.grid_rowconfigure(0, weight=1)
         body.grid_rowconfigure(1, weight=1)
 
@@ -63,8 +64,9 @@ class MainWindow(ctk.CTk):
         self.chart_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
         # ================= SIDE PANEL =================
-        side_panel = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15)
+        side_panel = ctk.CTkFrame(body, fg_color="#2a2d31", corner_radius=15, width=320)
         side_panel.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        side_panel.grid_propagate(False)
 
         # ===== TÍTULO =====
         titulo = ctk.CTkLabel(
@@ -105,7 +107,7 @@ class MainWindow(ctk.CTk):
             side_panel,
             text="Automático (Média Móvel)",
         )
-        self.auto_switch.pack(pady=20)
+        self.auto_switch.pack(pady=(24, 16))
 
         # ===== MODO DE OPERACAO (VISUAL) =====
         ctk.CTkLabel(side_panel, text="Modo de Operação").pack(pady=(5, 5))
@@ -124,7 +126,7 @@ class MainWindow(ctk.CTk):
             text="INICIAR BOT",
             fg_color="#1f8f4e",
             height=40
-        ).pack(pady=10, padx=20, fill="x")
+        ).pack(pady=(14, 12), padx=20, fill="x")
 
         # ===== QUANTIDADE DE TRADES =====
         trades_container = ctk.CTkFrame(
@@ -132,7 +134,7 @@ class MainWindow(ctk.CTk):
             fg_color="white",
             corner_radius=10
         )
-        trades_container.pack(pady=25, padx=20, fill="x")
+        trades_container.pack(pady=(20, 24), padx=20, fill="x")
 
         ctk.CTkLabel(
             trades_container,
@@ -167,12 +169,12 @@ class MainWindow(ctk.CTk):
             self.atualizar_preco_btc(float(self.preco_anterior))
 
     def _montar_header(self, preco: float | None, variacao_texto: str = "") -> str:
-        modo = (self.modo_operacao_combobox.get() if hasattr(self, "modo_operacao_combobox") else "Conservador").upper()
+        modo = "PADRAO"
         preco_texto = f"${preco:,.2f}" if preco is not None else "BTC/USDT"
         sufixo = f" {variacao_texto}" if variacao_texto else ""
         return (
-            f"BTC/USDT: {preco_texto}{sufixo} | Modo: {modo} | Saldo R$: 0.00 | "
-            f"Saldo BTC: 0.00000000 | Taxas: 0.00 | Drawdown: 0.00%"
+            f"BTC/USDT: {preco_texto}{sufixo}  Modo: {modo}  Saldo R$: 0.00  "
+            f"Saldo BTC: 0.00000000  Taxas: 0.00  Drawdown Atual: 0.00%"
         )
 
     def atualizar_preco_btc(self, novo_preco: float):
@@ -271,6 +273,5 @@ class MainWindow(ctk.CTk):
 
     def executar_estrategia(self, preco):
         print("Bot executando estratégia no preço:", preco)
-
 
 
