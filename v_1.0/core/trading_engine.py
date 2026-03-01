@@ -411,6 +411,7 @@ class TradingEngine:
 
         self.equity_curve: list[dict[str, float | str]] = []
         self.recent_returns: deque[float] = deque(maxlen=80)
+        self.last_trade: dict[str, float | str] | None = None
 
     def configure(self, initial_balance_brl: float, max_buy_brl: float, max_sell_brl: float) -> None:
         self.initial_balance_brl = float(initial_balance_brl)
@@ -428,6 +429,7 @@ class TradingEngine:
         self.trade_entries_last_hour.clear()
         self.equity_curve.clear()
         self.recent_returns.clear()
+        self.last_trade = None
 
     def set_drawdown_limit(self, pct: float) -> None:
         self.config.drawdown_pause_pct = max(0.5, float(pct))
@@ -615,6 +617,15 @@ class TradingEngine:
                 taxa_paga=fee_brl,
             )
 
+        self.last_trade = {
+            "side": "BUY",
+            "price": plan.entry_price,
+            "btc": btc,
+            "fee_brl": fee_brl,
+            "timestamp": now.isoformat(timespec="seconds"),
+            "reason": motivo_entrada,
+        }
+
         saldo_total = self.execution.total_balance_brl(plan.entry_price)
         short_sma = float((strategy_context or {}).get("short_sma") or 0.0)
         long_sma = float((strategy_context or {}).get("long_sma") or 0.0)
@@ -672,6 +683,17 @@ class TradingEngine:
                 motivo_saida=motivo_saida,
                 taxa_paga=fee_brl,
             )
+
+        self.last_trade = {
+            "side": "SELL",
+            "price": price_brl,
+            "btc": pos.quantity,
+            "fee_brl": fee_brl,
+            "pnl_brl": pnl_brl,
+            "pnl_pct": pnl_pct,
+            "timestamp": now.isoformat(timespec="seconds"),
+            "reason": motivo_saida,
+        }
 
         print(
             f"[{self.mode.upper()}] SELL | saida={price_brl:.2f} | lucro={pnl_pct:+.2f}% | "
@@ -765,4 +787,5 @@ class TradingEngine:
             "take_profit": self.position.take_profit if self.position else 0.0,
             "entry_price": self.position.entry_price if self.position else 0.0,
             "sharpe_simplificado": self.get_sharpe_simplificado(),
+            "last_trade": self.last_trade,
         }
