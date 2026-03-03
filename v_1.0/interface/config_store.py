@@ -9,11 +9,12 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 DEFAULT_CONFIG: dict[str, Any] = {
     "modo": "simulacao",
     "perfil": "Conservador",
+    "acumular_saldo": False,
     "saldo_inicial": 10000.0,
     "stop": 0.6,
     "take": 1.2,
     "valor_trade": 5.0,
-    "drawdown": 8.0,
+    "drawdown": 12.0,
 }
 
 

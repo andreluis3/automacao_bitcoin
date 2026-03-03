@@ -1,9 +1,10 @@
 {
   "modo": "simulacao",
   "perfil": "Agressivo",
+  "acumular_saldo": true,
   "saldo_inicial": 200.0,
   "stop": 0.6,
   "take": 1.2,
-  "valor_trade": 40.0,
+  "valor_trade": 50.0,
   "drawdown": 8.0
 }

@@ -8,8 +8,8 @@ from core.trading_engine import BinanceExecutionAdapter, EngineConfig, Simulatio
 from interface.config_store import load_config, save_config
 
 PROFILE_PRESETS: dict[str, dict[str, float]] = {
-    "Conservador": {"stop": 0.6, "take": 1.2, "valor_trade": 5.0, "drawdown": 8.0},
-    "Agressivo": {"stop": 1.2, "take": 2.5, "valor_trade": 15.0, "drawdown": 20.0},
+    "Conservador": {"stop": 0.6, "take": 1.2, "valor_trade": 5.0, "drawdown": 12.0},
+    "Agressivo": {"stop": 1.2, "take": 2.5, "valor_trade": 15.0, "drawdown": 12.0},
 }
 
 
@@ -39,10 +39,7 @@ class BotController:
     def _check_real_api_available(self) -> bool:
         try:
             client = getattr(self.market_data, "client", None)
-            if client is None:
-                return False
-            account = client.get_account()
-            return isinstance(account, dict)
+            return client is not None
         except Exception:
             return False
 
@@ -60,6 +57,14 @@ class BotController:
         self.config["modo"] = mode_norm
         save_config(self.config)
         self.log(f"Modo alterado para: {mode_norm.upper()}")
+
+    def set_accumulation_mode(self, enabled: bool) -> None:
+        is_enabled = bool(enabled)
+        self.config["acumular_saldo"] = is_enabled
+        save_config(self.config)
+        if self.engine is not None:
+            self.engine.set_accumulation_mode(is_enabled)
+        self.log(f"Modo acumulação: {'ATIVO' if is_enabled else 'INATIVO'}")
 
     def apply_profile(self, profile: str) -> None:
         profile_name = "Agressivo" if str(profile).strip().lower() == "agressivo" else "Conservador"
@@ -96,7 +101,8 @@ class BotController:
 
             profile = str(self.config.get("perfil", "Conservador"))
             self.engine.set_risk_profile(profile)
-            self.engine.set_drawdown_limit(float(self.config.get("drawdown", 8.0)))
+            self.engine.set_drawdown_limit(12.0)
+            self.engine.set_accumulation_mode(bool(self.config.get("acumular_saldo", False)))
 
             saldo_inicial = float(self.config.get("saldo_inicial", 10000.0))
             valor_trade_pct = float(self.config.get("valor_trade", 5.0))
@@ -123,20 +129,27 @@ class BotController:
         return True, "Bot parado"
 
     def _get_prices(self) -> tuple[float, float]:
-        price_usdt = float(self.market_data.pegar_preco_atual("BTCUSDT"))
-        try:
-            price_brl = float(self.market_data.pegar_preco_atual("BTCBRL"))
-        except Exception:
-            try:
-                usdt_brl = float(self.market_data.pegar_preco_atual("USDTBRL"))
-                price_brl = price_usdt * usdt_brl
-            except Exception:
-                price_brl = price_usdt
+        price_usdt = float(self.market_data.get_price_safe("BTCUSDT") or 0.0)
+        price_brl = float(self.market_data.get_price_safe("BTCBRL") or 0.0)
+        if price_brl <= 0 and price_usdt > 0:
+            usdt_brl = float(self.market_data.get_price_safe("USDTBRL") or 0.0)
+            price_brl = price_usdt * usdt_brl if usdt_brl > 0 else price_usdt
         return price_usdt, price_brl
+
+    def _get_latest_candle(self) -> dict[str, float]:
+        try:
+            kline = self.market_data.get_latest_kline("BTCBRL", "1m")
+            return {"close": float(kline.get("close", 0.0)), "volume": float(kline.get("volume", 0.0))}
+        except Exception:
+            return {"volume": 0.0}
 
     def get_runtime_snapshot(self) -> dict[str, Any]:
         try:
             self.latest_price_usdt, self.latest_price_brl = self._get_prices()
+            if self.latest_price_usdt <= 0:
+                self.latest_price_usdt = float(self.market_data.get_last_price_safe() or 0.0)
+            if self.latest_price_brl <= 0:
+                self.latest_price_brl = self.latest_price_usdt
         except Exception as exc:
             self.log(f"Erro ao obter preço: {exc}")
             return {
@@ -150,6 +163,14 @@ class BotController:
                 "mode": self.bot_state,
                 "state": self.bot_state,
                 "trade_event": None,
+                "lucro_hoje_brl": 0.0,
+                "safe_reserve_brl": 0.0,
+                "current_exposure_brl": 0.0,
+                "current_exposure_pct": 0.0,
+                "profit_factor": 0.0,
+                "profit_factor_warning": False,
+                "patrimonio_protegido_brl": 0.0,
+                "equity_history": [],
             }
 
         variacao_pct = 0.0
@@ -179,10 +200,12 @@ class BotController:
                 self._pending_on_price = None
 
             if self._pending_on_price is None:
+                candle_data = self._get_latest_candle()
                 self._pending_on_price = self._executor.submit(
                     self.engine.on_price,
                     self.latest_price_brl,
                     datetime.utcnow(),
+                    candle_data,
                 )
 
         if self.engine is not None:
@@ -192,12 +215,48 @@ class BotController:
             paused = bool(snap.get("paused_by_drawdown", False))
             position_open = bool(snap.get("position_open", False))
             last_trade = snap.get("last_trade")
+            lucro_hoje = float(snap.get("lucro_hoje_brl", 0.0))
+            safe_reserve = float(snap.get("safe_reserve_brl", 0.0))
+            exposicao_brl = float(snap.get("current_exposure_brl", 0.0))
+            exposicao_pct = float(snap.get("current_exposure_pct", 0.0))
+            profit_factor = float(snap.get("profit_factor", 0.0))
+            pf_warning = bool(snap.get("profit_factor_warning", False))
+            patrimonio_protegido = float(snap.get("patrimonio_protegido_brl", 0.0))
+            equity_history = list(snap.get("equity_history", []))
+            benchmark_history = list(snap.get("benchmark_history", []))
+            trade_history = list(snap.get("trade_history", []))
+            near_trade_logs = list(snap.get("near_trade_logs", []))
+            win_rate = float(snap.get("win_rate", 0.0))
+            avg_gain = float(snap.get("avg_gain", 0.0))
+            avg_loss = float(snap.get("avg_loss", 0.0))
+            expectancy = float(snap.get("expectancy", 0.0))
+            risk_status = str(snap.get("risk_status", "verde"))
+            confluence = dict(snap.get("confluence", {}))
+            last_signal_context = dict(snap.get("last_signal_context", {}))
         else:
             equity = float(self.config.get("saldo_inicial", 0.0))
             drawdown = 0.0
             paused = False
             position_open = False
             last_trade = None
+            lucro_hoje = 0.0
+            safe_reserve = 0.0
+            exposicao_brl = 0.0
+            exposicao_pct = 0.0
+            profit_factor = 0.0
+            pf_warning = False
+            patrimonio_protegido = 0.0
+            equity_history = []
+            benchmark_history = []
+            trade_history = []
+            near_trade_logs = []
+            win_rate = 0.0
+            avg_gain = 0.0
+            avg_loss = 0.0
+            expectancy = 0.0
+            risk_status = "verde"
+            confluence = {}
+            last_signal_context = {}
 
         return {
             "price_usdt": self.latest_price_usdt,
@@ -211,4 +270,22 @@ class BotController:
             "mode": self.config.get("modo", "simulacao"),
             "state": self.bot_state,
             "trade_event": trade_event,
+            "lucro_hoje_brl": lucro_hoje,
+            "safe_reserve_brl": safe_reserve,
+            "current_exposure_brl": exposicao_brl,
+            "current_exposure_pct": exposicao_pct,
+            "profit_factor": profit_factor,
+            "profit_factor_warning": pf_warning,
+            "patrimonio_protegido_brl": patrimonio_protegido,
+            "equity_history": equity_history,
+            "benchmark_history": benchmark_history,
+            "trade_history": trade_history,
+            "near_trade_logs": near_trade_logs,
+            "win_rate": win_rate,
+            "avg_gain": avg_gain,
+            "avg_loss": avg_loss,
+            "expectancy": expectancy,
+            "risk_status": risk_status,
+            "confluence": confluence,
+            "last_signal_context": last_signal_context,
         }
