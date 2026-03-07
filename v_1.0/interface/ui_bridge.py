@@ -21,12 +21,15 @@ class UIBridge:
         pf_warning = bool(snapshot.get("profit_factor_warning", False))
         state = str(snapshot.get("state", "parado"))
         mode = str(snapshot.get("mode", "simulacao")).upper()
+        strategy_mode_selected = str(snapshot.get("strategy_mode_selected", "auto")).upper()
+        strategy_mode_active = str(snapshot.get("strategy_mode_active", "lateral")).upper()
 
         arrow = "↑" if variation > 0 else "↓" if variation < 0 else ""
         sign = "+" if variation > 0 else ""
         var_txt = f" {arrow} {sign}{variation:.2f}%" if arrow else ""
         header = (
             f"BTC/USDT: ${price:,.2f}{var_txt}  Modo: {mode}  "
+            f"Estrategia: {strategy_mode_selected}/{strategy_mode_active}  "
             f"Equity R$: {equity:,.2f}  Drawdown Atual: {drawdown:.2f}%"
         )
 

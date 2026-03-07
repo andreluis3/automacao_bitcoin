@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import customtkinter as ctk
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,6 +25,7 @@ class TradingApp(ctk.CTk):
         self.controller = BotController(market_data=market_data, log_callback=self._enqueue_log)
         self.bridge = UIBridge(self)
         self._pending_logs: list[str] = []
+        self._log_lock = threading.Lock()
 
         self.max_candles = 240
         self.prices: list[float] = []
@@ -54,21 +57,26 @@ class TradingApp(ctk.CTk):
         self._criar_tab_performance()
 
     def _criar_tab_trading(self) -> None:
-        body = ctk.CTkFrame(self.tab_trading, fg_color="#161a20")
-        body.pack(fill="both", expand=True, padx=8, pady=8)
-        body.grid_columnconfigure(0, weight=8)
-        body.grid_columnconfigure(1, weight=2, minsize=340)
-        body.grid_rowconfigure(0, weight=1)
-        body.grid_rowconfigure(1, weight=0)
+        self.tab_trading.grid_columnconfigure(0, weight=4)
+        self.tab_trading.grid_columnconfigure(1, weight=1)
+        self.tab_trading.grid_rowconfigure(0, weight=0)
+        self.tab_trading.grid_rowconfigure(1, weight=5)
+        self.tab_trading.grid_rowconfigure(2, weight=1)
 
-        self.chart_frame = ctk.CTkFrame(body, fg_color="#1f232a", corner_radius=14)
-        self.chart_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 10))
+        self.header_frame = ctk.CTkFrame(self.tab_trading, fg_color="#1f232a", corner_radius=14)
+        self.header_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
+        ctk.CTkLabel(self.header_frame, text="CONTROLE DO BOT", font=("Arial", 17, "bold")).pack(pady=(12, 10))
 
-        side = ctk.CTkFrame(body, fg_color="#1f232a", corner_radius=14, width=340)
-        side.grid(row=0, column=1, sticky="nsew", pady=(0, 10))
-        side.grid_propagate(False)
+        self.graph_frame = ctk.CTkFrame(self.tab_trading, fg_color="#1f232a", corner_radius=14)
+        self.graph_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=5)
 
-        ctk.CTkLabel(side, text="CONTROLE DO BOT", font=("Arial", 17, "bold")).pack(pady=(16, 8))
+        self.side_panel = ctk.CTkFrame(self.tab_trading, fg_color="#1f232a", corner_radius=14)
+        self.side_panel.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
+        self.side_panel.configure(width=320)
+        self.side_panel.grid_propagate(False)
+        side = self.side_panel
+
+        ctk.CTkLabel(side, text="Configuração", font=("Arial", 15, "bold")).pack(pady=(10, 8))
         status_row = ctk.CTkFrame(side, fg_color="transparent")
         status_row.pack(fill="x", padx=16, pady=(2, 8))
         self.led_status = ctk.CTkLabel(status_row, text="●", font=("Arial", 26), text_color="#6b7280")
@@ -81,6 +89,14 @@ class TradingApp(ctk.CTk):
         self.mode_switch.pack(fill="x", padx=16, pady=(6, 6))
         self.lock_label = ctk.CTkLabel(side, text="", text_color="#f59e0b", font=("Arial", 12, "bold"))
         self.lock_label.pack(anchor="w", padx=16, pady=(0, 8))
+
+        ctk.CTkLabel(side, text="Modo de Trading", anchor="w").pack(fill="x", padx=16)
+        self.strategy_mode_switch = ctk.CTkSegmentedButton(
+            side,
+            values=["TENDENCIA", "LATERAL", "AUTO"],
+            command=self._on_strategy_mode_change,
+        )
+        self.strategy_mode_switch.pack(fill="x", padx=16, pady=(6, 10))
 
         ctk.CTkLabel(side, text="Perfil", anchor="w").pack(fill="x", padx=16)
         self.profile_combo = ctk.CTkComboBox(
@@ -96,7 +112,16 @@ class TradingApp(ctk.CTk):
         self.stop_button = ctk.CTkButton(side, text="PARAR", height=42, fg_color="#dc2626", hover_color="#b91c1c", command=self._on_stop_clicked)
         self.stop_button.pack(fill="x", padx=16, pady=(0, 10))
         self.config_button = ctk.CTkButton(side, text="⚙ Configurações", height=36, fg_color="#334155", hover_color="#475569", command=self._abrir_janela_simulacao)
-        self.config_button.pack(fill="x", padx=16, pady=(0, 14))
+        self.config_button.pack(fill="x", padx=16, pady=(0, 8))
+        self.download_logs_button = ctk.CTkButton(
+            side,
+            text="Download Logs",
+            height=36,
+            fg_color="#1d4ed8",
+            hover_color="#1e40af",
+            command=self._on_download_logs_clicked,
+        )
+        self.download_logs_button.pack(fill="x", padx=16, pady=(0, 14))
 
         self.accumulate_switch = ctk.CTkSwitch(side, text="Ativar Acumulação", command=self._on_accumulation_toggle)
         self.accumulate_switch.pack(anchor="w", padx=16, pady=(0, 10))
@@ -116,10 +141,12 @@ class TradingApp(ctk.CTk):
         self.drawdown_progress.set(0)
         self.drawdown_progress.pack(fill="x", padx=12, pady=(2, 12))
 
-        console_frame = ctk.CTkFrame(body, fg_color="#0b1220", corner_radius=12)
-        console_frame.grid(row=1, column=0, columnspan=2, sticky="nsew")
-        ctk.CTkLabel(console_frame, text="Console de Logs", font=("Arial", 13, "bold")).pack(anchor="w", padx=12, pady=(8, 4))
-        self.console_box = ctk.CTkTextbox(console_frame, height=170, state="disabled")
+        self.log_frame = ctk.CTkFrame(self.tab_trading, fg_color="#0b1220", corner_radius=12)
+        self.log_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=(5, 10))
+        self.log_frame.configure(height=100)
+        self.log_frame.grid_propagate(False)
+        ctk.CTkLabel(self.log_frame, text="Console de Logs", font=("Arial", 13, "bold")).pack(anchor="w", padx=12, pady=(8, 4))
+        self.console_box = ctk.CTkTextbox(self.log_frame, height=70, state="disabled")
         self.console_box.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
     def _criar_tab_performance(self) -> None:
@@ -133,13 +160,19 @@ class TradingApp(ctk.CTk):
         zone1.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         zone1.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
 
-        self.perf_win_rate = self._create_big_card(zone1, 0, "Win Rate", "0.00%")
-        self.perf_pf = self._create_big_card(zone1, 1, "Profit Factor", "0.00")
-        self.perf_expect = self._create_big_card(zone1, 2, "Expectativa Matemática", "R$ 0.00")
-        self.perf_dd = self._create_big_card(zone1, 3, "Drawdown Atual", "0.00%")
-        self.perf_risk = self._create_big_card(zone1, 4, "Status de Risco", "VERDE")
-        self.expectancy_text = ctk.CTkLabel(zone1, text="Para cada R$ 1 arriscado, retorno esperado: R$ 0.00", anchor="w")
+        self.perf_total_trades = self._create_big_card(zone1, 0, "Total de Trades", "0")
+        self.perf_win_rate = self._create_big_card(zone1, 1, "Win Rate", "0.00%")
+        self.perf_lucro_liquido = self._create_big_card(zone1, 2, "Lucro Líquido", "R$ 0.00")
+        self.perf_dd_max = self._create_big_card(zone1, 3, "Drawdown Máximo", "0.00%")
+        self.perf_pf = self._create_big_card(zone1, 4, "Profit Factor", "0.00")
+        self.expectancy_text = ctk.CTkLabel(zone1, text="Resumo em tempo real da simulação", anchor="w")
         self.expectancy_text.grid(row=1, column=0, columnspan=5, sticky="ew", padx=12, pady=(2, 8))
+        self.cross_stats_text = ctk.CTkLabel(
+            zone1,
+            text="Cross total: 0 | Filtrados: 0 | Executados: 0 | Trades +: 0 | Trades -: 0",
+            anchor="w",
+        )
+        self.cross_stats_text.grid(row=2, column=0, columnspan=5, sticky="ew", padx=12, pady=(0, 8))
 
         zone2 = ctk.CTkFrame(root, fg_color="#1f232a", corner_radius=12)
         zone2.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
@@ -161,11 +194,11 @@ class TradingApp(ctk.CTk):
 
         self.confluence_panel = ctk.CTkFrame(zone3, fg_color="#0f172a", corner_radius=10)
         self.confluence_panel.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
-        self.confluence_rsi = ctk.CTkLabel(self.confluence_panel, text="RSI: 🔴")
-        self.confluence_dist = ctk.CTkLabel(self.confluence_panel, text="Distância SMA: 🔴")
-        self.confluence_vol = ctk.CTkLabel(self.confluence_panel, text="Volume: 🔴")
-        self.confluence_bb = ctk.CTkLabel(self.confluence_panel, text="Bollinger: 🔴")
-        self.confluence_veredito = ctk.CTkLabel(self.confluence_panel, text="Aguardando confluência", font=("Arial", 13, "bold"))
+        self.confluence_rsi = ctk.CTkLabel(self.confluence_panel, text="EMA9>EMA21: 🔴")
+        self.confluence_dist = ctk.CTkLabel(self.confluence_panel, text="Slope EMA9: 🔴")
+        self.confluence_vol = ctk.CTkLabel(self.confluence_panel, text="ATR Gate: 🔴")
+        self.confluence_bb = ctk.CTkLabel(self.confluence_panel, text="Regime: LATERAL")
+        self.confluence_veredito = ctk.CTkLabel(self.confluence_panel, text="Aguardando confluencia", font=("Arial", 13, "bold"))
         self.confluence_rsi.pack(side="left", padx=10, pady=8)
         self.confluence_dist.pack(side="left", padx=10, pady=8)
         self.confluence_vol.pack(side="left", padx=10, pady=8)
@@ -210,8 +243,9 @@ class TradingApp(ctk.CTk):
             fontsize=9,
             bbox={"facecolor": "#0f172a", "alpha": 0.85, "edgecolor": "#334155"},
         )
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.chart_frame)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        self.fig.subplots_adjust(left=0.06, right=0.98, top=0.95, bottom=0.1)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.graph_frame)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
         self.canvas.mpl_connect("motion_notify_event", self._on_chart_hover)
 
     def _criar_graficos_performance(self) -> None:
@@ -268,25 +302,35 @@ class TradingApp(ctk.CTk):
     def _update_performance_tab(self, snapshot: dict) -> None:
         win_rate = float(snapshot.get("win_rate", 0.0))
         pf = float(snapshot.get("profit_factor", 0.0))
-        expectancy = float(snapshot.get("expectancy", 0.0))
-        drawdown = float(snapshot.get("current_drawdown_pct", 0.0))
-        risk_status = str(snapshot.get("risk_status", "verde")).upper()
+        drawdown_max = float(snapshot.get("drawdown_max_pct", 0.0))
         avg_gain = float(snapshot.get("avg_gain", 0.0))
         avg_loss = float(snapshot.get("avg_loss", 0.0))
+        total_trades_snap = int(snapshot.get("total_trades", 0) or 0)
+        lucro_liquido = float(snapshot.get("lucro_liquido_brl", 0.0))
         equity_history = [float(v) for v in (snapshot.get("equity_history") or [])]
         benchmark_history = [float(v) for v in (snapshot.get("benchmark_history") or [])]
         trades = list(snapshot.get("trade_history") or [])
         near_logs = list(snapshot.get("near_trade_logs") or [])
         confluence = dict(snapshot.get("confluence") or {})
+        total_cross = int(snapshot.get("total_cross", 0) or 0)
+        cross_filtrados = int(snapshot.get("cross_filtrados", 0) or 0)
+        cross_executados = int(snapshot.get("cross_executados", 0) or 0)
+        trades_lucrativos = int(snapshot.get("trades_lucrativos", 0) or 0)
+        trades_prejuizo = int(snapshot.get("trades_prejuizo", 0) or 0)
 
+        self.perf_total_trades.configure(text=f"{total_trades_snap}")
         self.perf_win_rate.configure(text=f"{win_rate * 100:.2f}%")
         self.perf_pf.configure(text=f"{pf:.2f}")
-        self.perf_expect.configure(text=f"R$ {expectancy:,.2f}")
-        self.perf_dd.configure(text=f"{drawdown:.2f}%")
-        risk_color = "#22c55e" if risk_status == "VERDE" else "#f59e0b" if risk_status == "AMARELO" else "#ef4444"
-        self.perf_risk.configure(text=risk_status, text_color=risk_color)
+        self.perf_lucro_liquido.configure(text=f"R$ {lucro_liquido:,.2f}")
+        self.perf_dd_max.configure(text=f"{drawdown_max:.2f}%")
         self.expectancy_text.configure(
-            text=f"Para cada R$ 1 arriscado, retorno esperado: R$ {expectancy:,.2f} | Avg Gain: R$ {avg_gain:,.2f} | Avg Loss: R$ {avg_loss:,.2f}"
+            text=f"Atualização em tempo real | Avg Gain: R$ {avg_gain:,.2f} | Avg Loss: R$ {avg_loss:,.2f}"
+        )
+        self.cross_stats_text.configure(
+            text=(
+                f"Cross total: {total_cross} | Filtrados: {cross_filtrados} | Executados: {cross_executados} | "
+                f"Trades +: {trades_lucrativos} | Trades -: {trades_prejuizo}"
+            )
         )
 
         if equity_history:
@@ -334,23 +378,23 @@ class TradingApp(ctk.CTk):
         self._fill_table_box(
             self.near_trades_box,
             near_logs[-120:],
-            "Data                | Motivo                        | SMA9     | SMA21    | SMA50    | RSI   | Vol",
+            "Data                | BTC       | EMA9     | EMA21    | Dist%    | Slope    | Motivo",
             lambda row: (
                 f"{str(row.get('data', ''))[:19]:19} | "
-                f"{str(row.get('reason', ''))[:28]:28} | "
-                f"{float(row.get('sma9', 0.0)):8.2f} | "
-                f"{float(row.get('sma21', 0.0)):8.2f} | "
-                f"{float(row.get('sma50', 0.0)):8.2f} | "
-                f"{float(row.get('rsi', 0.0)):5.1f} | "
-                f"{str(row.get('volume_status', ''))[:8]}"
+                f"{float(row.get('price_btc', 0.0)):9.2f} | "
+                f"{float(row.get('ema9', 0.0)):8.2f} | "
+                f"{float(row.get('ema21', 0.0)):8.2f} | "
+                f"{float(row.get('distancia_percentual', 0.0))*100:7.2f}% | "
+                f"{float(row.get('slope', 0.0)):8.4f} | "
+                f"{str(row.get('reason', ''))[:22]:22}"
             ),
         )
 
-        self.confluence_rsi.configure(text=f"RSI: {'🟢' if confluence.get('rsi_ok') else '🔴'}")
-        self.confluence_dist.configure(text=f"Distância SMA: {'🟢' if confluence.get('distancia_ok') else '🔴'}")
-        self.confluence_vol.configure(text=f"Volume: {'🟢' if confluence.get('volume_ok') else '🔴'}")
-        self.confluence_bb.configure(text=f"Bollinger: {'🟢' if confluence.get('bollinger_ok') else '🔴'}")
-        self.confluence_veredito.configure(text=str(confluence.get("veredito") or "Aguardando confluência"))
+        self.confluence_rsi.configure(text=f"EMA9>EMA21: {'🟢' if confluence.get('ema_above_sma') else '🔴'}")
+        self.confluence_dist.configure(text=f"Slope EMA9: {'🟢' if confluence.get('sma_slope_up') else '🔴'}")
+        self.confluence_vol.configure(text=f"ATR Gate: {'🟢' if confluence.get('distancia_ok') else '🔴'}")
+        self.confluence_bb.configure(text=f"Regime: {str(snapshot.get('strategy_mode_active', 'lateral')).upper()}")
+        self.confluence_veredito.configure(text=str(confluence.get("veredito") or "Aguardando confluencia"))
 
     def _fill_table_box(self, box: ctk.CTkTextbox, rows: list[dict], header: str, formatter) -> None:
         lines = [header, "-" * len(header)]
@@ -362,6 +406,7 @@ class TradingApp(ctk.CTk):
         box.configure(state="disabled")
 
     def loop_principal(self) -> None:
+        self._flush_pending_logs()
         snapshot = self.controller.get_runtime_snapshot()
         self._redesenhar_grafico(float(snapshot.get("price_usdt", 0.0)))
         self._update_performance_tab(snapshot)
@@ -383,6 +428,17 @@ class TradingApp(ctk.CTk):
         self.controller.set_mode(mode)
         self._atualizar_lock_real()
         self._atualizar_botoes_por_estado()
+
+    def _on_strategy_mode_change(self, value: str) -> None:
+        mode_map = {"TENDENCIA": "tendencia", "LATERAL": "lateral", "AUTO": "auto"}
+        self.controller.set_trading_mode(mode_map.get(str(value).upper(), "auto"))
+
+    def _on_download_logs_clicked(self) -> None:
+        ok, path_or_err = self.controller.download_logs_report()
+        if ok:
+            self.bridge.log_message(f"Relatorio gerado: {path_or_err}")
+        else:
+            self.bridge.log_message(f"Falha ao gerar relatorio: {path_or_err}")
 
     def _on_profile_change(self, profile: str) -> None:
         self.controller.apply_profile(profile)
@@ -407,6 +463,10 @@ class TradingApp(ctk.CTk):
         self.profile_combo.set(perfil)
         modo = str(self.controller.config.get("modo", "simulacao"))
         self.mode_switch.set("REAL" if modo == "real" else "SIMULACAO")
+        strategy_mode = str(self.controller.config.get("trading_mode", "auto")).upper()
+        if strategy_mode not in {"TENDENCIA", "LATERAL", "AUTO"}:
+            strategy_mode = "AUTO"
+        self.strategy_mode_switch.set(strategy_mode)
         if bool(self.controller.config.get("acumular_saldo", False)):
             self.accumulate_switch.select()
         else:
@@ -432,15 +492,15 @@ class TradingApp(ctk.CTk):
             self.start_button.configure(state="disabled")
 
     def _enqueue_log(self, msg: str) -> None:
-        if hasattr(self, "console_box"):
-            self.bridge.log_message(msg)
-        else:
+        with self._log_lock:
             self._pending_logs.append(msg)
 
     def _flush_pending_logs(self) -> None:
-        for msg in self._pending_logs:
+        with self._log_lock:
+            logs = list(self._pending_logs)
+            self._pending_logs.clear()
+        for msg in logs:
             self.bridge.log_message(msg)
-        self._pending_logs.clear()
 
     def _on_close(self) -> None:
         self.controller.shutdown()

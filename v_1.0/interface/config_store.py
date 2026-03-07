@@ -8,6 +8,7 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "modo": "simulacao",
+    "trading_mode": "auto",
     "perfil": "Conservador",
     "acumular_saldo": False,
     "saldo_inicial": 10000.0,

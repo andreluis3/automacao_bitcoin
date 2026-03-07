@@ -25,8 +25,6 @@ class JanelaSimulacao(ctk.CTkToplevel):
 
         self.entry_saldo_inicial = self._add_field(container, "Saldo Inicial (R$)")
         self.entry_valor_trade = self._add_field(container, "Valor por trade (%)")
-        self.entry_stop = self._add_field(container, "Stop Loss (%)")
-        self.entry_take = self._add_field(container, "Take Profit (%)")
         self.entry_drawdown = self._add_field(container, "Drawdown Máximo (%)")
 
         ctk.CTkLabel(container, text="Perfil", font=("Arial", 16, "bold")).pack(anchor="w", pady=(14, 6))
@@ -49,18 +47,26 @@ class JanelaSimulacao(ctk.CTkToplevel):
     def _preencher_campos(self) -> None:
         self.entry_saldo_inicial.insert(0, str(self._config.get("saldo_inicial", 10000)))
         self.entry_valor_trade.insert(0, str(self._config.get("valor_trade", 5)))
-        self.entry_stop.insert(0, str(self._config.get("stop", 0.6)))
-        self.entry_take.insert(0, str(self._config.get("take", 1.2)))
-        self.entry_drawdown.insert(0, str(self._config.get("drawdown", 8)))
+        self.entry_drawdown.insert(0, str(self._config.get("drawdown", 12)))
         self.profile_combo.set(str(self._config.get("perfil", "Conservador")))
 
+    def _to_float(self, value: str, field_name: str, min_value: float) -> float:
+        raw = str(value).strip().replace(",", ".")
+        if not raw:
+            raise ValueError(f"{field_name} é obrigatório.")
+        num = float(raw)
+        if num < min_value:
+            raise ValueError(f"{field_name} deve ser >= {min_value}.")
+        return num
+
     def _collect(self) -> dict:
+        saldo = self._to_float(self.entry_saldo_inicial.get(), "Saldo inicial", 1.0)
+        valor_trade = self._to_float(self.entry_valor_trade.get(), "Valor por trade (%)", 0.1)
+        drawdown = self._to_float(self.entry_drawdown.get(), "Drawdown máximo (%)", 0.5)
         return {
-            "saldo_inicial": float(self.entry_saldo_inicial.get().replace(",", ".") or 0),
-            "valor_trade": float(self.entry_valor_trade.get().replace(",", ".") or 0),
-            "stop": float(self.entry_stop.get().replace(",", ".") or 0),
-            "take": float(self.entry_take.get().replace(",", ".") or 0),
-            "drawdown": float(self.entry_drawdown.get().replace(",", ".") or 0),
+            "saldo_inicial": saldo,
+            "valor_trade": min(100.0, valor_trade),
+            "drawdown": drawdown,
             "perfil": self.profile_combo.get(),
         }
 
@@ -69,8 +75,8 @@ class JanelaSimulacao(ctk.CTkToplevel):
             data = self._collect()
             self._on_save_callback(data)
             self.destroy()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.title(f"Configuração Simulação | Erro: {exc}")
 
     def _iniciar(self) -> None:
         try:
@@ -78,5 +84,5 @@ class JanelaSimulacao(ctk.CTkToplevel):
             self._on_save_callback(data)
             self._on_start_callback()
             self.destroy()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.title(f"Configuração Simulação | Erro: {exc}")

@@ -8,6 +8,8 @@ from math import sqrt
 from statistics import mean, pstdev
 from typing import Any
 
+from core.strategy_engine import StrategyConfig, StrategyEngine
+
 
 @dataclass
 class RiskConfig:
@@ -16,7 +18,6 @@ class RiskConfig:
     risk_per_trade_pct_defensive: float = 1.25
     max_exposure_pct: float = 40.0
     min_order_value_brl: float = 35.0
-    min_rr: float = 1.5
 
 
 @dataclass
@@ -30,10 +31,8 @@ class EngineConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     overtrading: OvertradingConfig = field(default_factory=OvertradingConfig)
     drawdown_pause_pct: float = 12.0
-    sma_short_period: int = 9
-    sma_long_period: int = 21
-    sma_trend_period: int = 50
-    stop_lookback: int = 6
+    take_profit_pct: float = 0.8
+    stop_loss_pct: float = 0.4
 
 
 @dataclass
@@ -61,202 +60,6 @@ class Position:
     opened_at: datetime
 
 
-class SmaCrossoverStrategy:
-    def __init__(self, config: EngineConfig):
-        self.config = config
-        self.prices: deque[float] = deque(maxlen=1000)
-        self.volumes: deque[float] = deque(maxlen=1000)
-        self.logger = logging.getLogger(__name__)
-
-    def update_price(self, price: float, volume: float | None = None) -> None:
-        if price > 0:
-            self.prices.append(float(price))
-            self.volumes.append(max(0.0, float(volume or 0.0)))
-
-    def _sma(self, period: int, shift: int = 0) -> float | None:
-        arr = list(self.prices)
-        if len(arr) < period + shift:
-            return None
-        if shift == 0:
-            sample = arr[-period:]
-        else:
-            sample = arr[-(period + shift) : -shift]
-        return sum(sample) / len(sample)
-
-    def _previous_low_high(self) -> tuple[float | None, float | None]:
-        arr = list(self.prices)
-        lookback = self.config.stop_lookback
-        if len(arr) <= lookback:
-            return None, None
-        sample = arr[-(lookback + 1) : -1]
-        if not sample:
-            return None, None
-        return min(sample), max(sample)
-
-    @staticmethod
-    def _stddev(values: list[float]) -> float:
-        if len(values) < 2:
-            return 0.0
-        return pstdev(values)
-
-    def _rsi(self, period: int = 14) -> float | None:
-        prices = list(self.prices)
-        if len(prices) < period + 1:
-            return None
-        gains: list[float] = []
-        losses: list[float] = []
-        for idx in range(-period, 0):
-            delta = prices[idx] - prices[idx - 1]
-            if delta >= 0:
-                gains.append(delta)
-            else:
-                losses.append(abs(delta))
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-        if avg_loss <= 0:
-            return 100.0
-        rs = avg_gain / avg_loss
-        return 100.0 - (100.0 / (1.0 + rs))
-
-    def _bollinger(self, period: int = 20, num_std: float = 2.0) -> tuple[float | None, float | None]:
-        prices = list(self.prices)
-        if len(prices) < period:
-            return None, None
-        sample = prices[-period:]
-        center = sum(sample) / period
-        std = self._stddev(sample)
-        return center + (num_std * std), center - (num_std * std)
-
-    def _mean_volume(self, period: int = 10) -> float | None:
-        vols = list(self.volumes)
-        if len(vols) < period:
-            return None
-        sample = vols[-period:]
-        if not sample:
-            return None
-        return sum(sample) / len(sample)
-
-    def evaluate_signal(self, has_position: bool) -> dict[str, float | bool | str | None]:
-        if len(self.prices) < 50:
-            return {
-                "signal": "none",
-                "reason": "dados_insuficientes",
-                "slope_sma9": None,
-                "distancia_percentual": None,
-                "rsi": None,
-                "volume_status": "indefinido",
-            }
-
-        price = float(self.prices[-1]) if self.prices else 0.0
-        short_now = self._sma(self.config.sma_short_period)
-        long_now = self._sma(self.config.sma_long_period)
-        trend_now = self._sma(self.config.sma_trend_period)
-        trend_prev = self._sma(self.config.sma_trend_period, shift=3)
-        short_prev = self._sma(self.config.sma_short_period, shift=1)
-        long_prev = self._sma(self.config.sma_long_period, shift=1)
-        long_prev2 = self._sma(self.config.sma_long_period, shift=3)
-        rsi = self._rsi(period=14)
-        bb_upper, bb_lower = self._bollinger(period=20, num_std=2.0)
-        volume_avg = self._mean_volume(period=10)
-        volume_current = float(self.volumes[-1]) if self.volumes else 0.0
-        previous_low, previous_high = self._previous_low_high()
-
-        if any(
-            x is None
-            for x in (
-                short_now,
-                long_now,
-                trend_now,
-                trend_prev,
-                short_prev,
-                long_prev,
-                long_prev2,
-                rsi,
-                bb_lower,
-                volume_avg,
-            )
-        ):
-            return {
-                "signal": "none",
-                "reason": "dados_insuficientes",
-                "slope_sma9": None,
-                "distancia_percentual": None,
-                "rsi": rsi,
-                "volume_status": "indefinido",
-            }
-
-        assert short_now is not None
-        assert long_now is not None
-        assert trend_now is not None
-        assert trend_prev is not None
-        assert short_prev is not None
-        assert long_prev is not None
-        assert long_prev2 is not None
-        assert rsi is not None
-        assert bb_lower is not None
-        assert bb_upper is not None
-        assert volume_avg is not None
-
-        trend = "alta" if price > trend_now else "baixa"
-        cross_up = short_prev <= long_prev and short_now > long_now
-        cross_down = short_prev >= long_prev and short_now < long_now
-        sma21_slope_positive = long_now > long_prev2
-        sma50_slope_positive = trend_now > trend_prev
-        trend_strength_up = price > trend_now and sma50_slope_positive
-        dist_percent = abs(short_now - long_now) / long_now if long_now > 0 else 0.0
-        slope_sma9 = short_now - short_prev
-        volume_status = "alto" if volume_current > (volume_avg * 1.2) else "baixo"
-
-        base = {
-            "short_sma": short_now,
-            "long_sma": long_now,
-            "trend_sma": trend_now,
-            "trend": trend,
-            "price": price,
-            "previous_low": previous_low,
-            "previous_high": previous_high,
-            "rsi": rsi,
-            "bb_upper": bb_upper,
-            "bb_lower": bb_lower,
-            "volume_avg": volume_avg,
-            "volume_current": volume_current,
-            "dist_percent": dist_percent,
-            "distancia_percentual": dist_percent,
-            "trend_strength_up": trend_strength_up,
-            "sma50_slope_positive": sma50_slope_positive,
-            "slope_sma9": slope_sma9,
-            "volume_status": volume_status,
-        }
-
-        if not has_position:
-            if short_now <= long_now:
-                return {"signal": "none", "reason": "sma9_abaixo_sma21", **base}
-            if price <= trend_now:
-                return {"signal": "none", "reason": "preco_abaixo_sma50", **base}
-            if not sma21_slope_positive:
-                return {"signal": "none", "reason": "sma21_sem_inclinacao_positiva", **base}
-            if dist_percent < 0.003:
-                return {"signal": "none", "reason": "distancia_sma_insuficiente", **base}
-
-            score = 0
-            if cross_up:
-                score += 1
-            if rsi < 40.0:
-                score += 1
-            if price <= bb_lower:
-                score += 1
-            if volume_current > (volume_avg * 1.2):
-                score += 1
-            if score < 3:
-                return {"signal": "none", "reason": "confluencia_insuficiente", "score": score, **base}
-            return {"signal": "buy", "reason": "entrada_confluencia_forte", "score": score, **base}
-
-        if cross_down and price < trend_now:
-            return {"signal": "sell", "reason": "cruzamento_sma9_abaixo_sma21_com_tendencia_baixa", **base}
-
-        return {"signal": "none", "reason": "manter_posicao", **base}
-
-
 class RiskManager:
     def __init__(self, risk_config: RiskConfig):
         self.config = risk_config
@@ -267,12 +70,15 @@ class RiskManager:
         available_brl: float,
         entry_price: float,
         stop_price: float,
+        take_price: float,
         max_buy_brl: float,
         risk_per_trade_pct: float,
     ) -> PositionPlan | None:
         if equity_brl <= 0 or available_brl <= 0 or entry_price <= 0:
             return None
         if stop_price <= 0 or stop_price >= entry_price:
+            return None
+        if take_price <= entry_price:
             return None
 
         risk_per_unit = entry_price - stop_price
@@ -294,14 +100,13 @@ class RiskManager:
         if quantity <= 0 or position_value <= 0:
             return None
 
-        take_profit = entry_price + (entry_price - stop_price) * self.config.min_rr
         risk_pct = ((entry_price - stop_price) / entry_price) * 100
 
         return PositionPlan(
             quantity=quantity,
             entry_price=entry_price,
             stop_loss=stop_price,
-            take_profit=take_profit,
+            take_profit=take_price,
             risk_brl=risk_brl,
             risk_pct=risk_pct,
             notional_brl=position_value,
@@ -414,9 +219,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         return self._asset_total("BTC")
 
     def total_balance_brl(self, price_brl: float) -> float:
-        brl = self.available_brl()
-        btc = self.btc_balance()
-        return brl + (btc * price_brl)
+        return self.available_brl() + (self.btc_balance() * price_brl)
 
     def buy_quote(self, quote_brl: float, price_brl: float) -> tuple[float, float]:
         amount = max(0.0, float(quote_brl))
@@ -429,7 +232,6 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             type="MARKET",
             quoteOrderQty=round(amount, 2),
         )
-
         executed_qty = sum(float(fill.get("qty", 0.0)) for fill in order.get("fills", []))
         if executed_qty <= 0:
             executed_qty = float(order.get("executedQty", 0.0))
@@ -443,14 +245,12 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         if qty <= 0 or price_brl <= 0:
             return 0.0, 0.0
 
-        step_qty = round(qty, 6)
         order = self.client.create_order(
             symbol="BTCBRL",
             side="SELL",
             type="MARKET",
-            quantity=step_qty,
+            quantity=round(qty, 6),
         )
-
         quote_qty = float(order.get("cummulativeQuoteQty", 0.0))
         fee_brl = quote_qty * self.fee_rate
         self.total_fee_paid_brl += fee_brl
@@ -471,9 +271,11 @@ class TradingEngine:
         self.config = config or EngineConfig()
 
         self.logger = logging.getLogger(__name__)
-
-        self.strategy = SmaCrossoverStrategy(self.config)
+        self.strategy = StrategyEngine(StrategyConfig())
         self.risk_manager = RiskManager(self.config.risk)
+
+        self.selected_strategy_mode = "auto"
+        self.active_strategy_mode = "lateral"
 
         self.initial_balance_brl = 0.0
         self.max_buy_brl = 0.0
@@ -512,6 +314,10 @@ class TradingEngine:
         self.gain_values: list[float] = []
         self.loss_values: list[float] = []
 
+        self.total_cross = 0
+        self.cross_filtrados = 0
+        self.cross_executados = 0
+
     def configure(self, initial_balance_brl: float, max_buy_brl: float, max_sell_brl: float) -> None:
         self.initial_balance_brl = float(initial_balance_brl)
         self.max_buy_brl = float(max_buy_brl)
@@ -548,6 +354,9 @@ class TradingEngine:
         self.current_risk_per_trade_pct = self.config.risk.risk_per_trade_pct_base
         self.gain_values.clear()
         self.loss_values.clear()
+        self.total_cross = 0
+        self.cross_filtrados = 0
+        self.cross_executados = 0
 
     def set_drawdown_limit(self, pct: float) -> None:
         self.config.drawdown_pause_pct = max(0.5, float(pct))
@@ -555,16 +364,21 @@ class TradingEngine:
     def set_accumulation_mode(self, enabled: bool) -> None:
         self.accumulation_mode = bool(enabled)
 
+    def set_strategy_mode(self, strategy_mode: str) -> None:
+        mode = str(strategy_mode).strip().lower()
+        if mode not in {"tendencia", "lateral", "auto"}:
+            return
+        self.selected_strategy_mode = mode
+
     def set_risk_profile(self, profile_name: str) -> None:
         key = str(profile_name).strip().lower()
         if key == "conservador":
             self.config.risk = RiskConfig(
                 risk_per_trade_pct_base=2.0,
-                risk_per_trade_pct_aggressive=3.2,
+                risk_per_trade_pct_aggressive=3.0,
                 risk_per_trade_pct_defensive=1.0,
                 max_exposure_pct=30.0,
                 min_order_value_brl=35.0,
-                min_rr=1.8,
             )
             self.config.overtrading = OvertradingConfig(min_seconds_between_trades=240, max_trades_per_hour=6)
             self.config.drawdown_pause_pct = 8.0
@@ -575,13 +389,12 @@ class TradingEngine:
                 risk_per_trade_pct_defensive=1.25,
                 max_exposure_pct=40.0,
                 min_order_value_brl=35.0,
-                min_rr=1.5,
             )
-            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=180, max_trades_per_hour=8)
+            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=120, max_trades_per_hour=12)
             self.config.drawdown_pause_pct = 15.0
         else:
             self.config.risk = RiskConfig()
-            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=180, max_trades_per_hour=8)
+            self.config.overtrading = OvertradingConfig()
             self.config.drawdown_pause_pct = 12.0
 
         self.risk_manager = RiskManager(self.config.risk)
@@ -603,15 +416,12 @@ class TradingEngine:
 
     def _update_risk_regime(self, signal_ctx: dict[str, Any] | None = None) -> None:
         risk = self.config.risk.risk_per_trade_pct_base
-        if self.consecutive_losses >= 5:
-            risk = self.config.risk.risk_per_trade_pct_defensive
-        elif self.consecutive_losses >= 3:
+        if self.consecutive_losses >= 3:
             risk = self.config.risk.risk_per_trade_pct_defensive
         else:
             pf = self._current_profit_factor()
-            last3_wins = len(self.trade_outcomes) >= 3 and all(list(self.trade_outcomes)[-3:])
-            trend_strong = bool((signal_ctx or {}).get("trend_strength_up"))
-            if pf > 1.4 and last3_wins and trend_strong:
+            trend_mode = str((signal_ctx or {}).get("active_mode") or "") == "tendencia"
+            if pf > 1.3 and trend_mode:
                 risk = self.config.risk.risk_per_trade_pct_aggressive
         self.current_risk_per_trade_pct = risk
 
@@ -623,8 +433,7 @@ class TradingEngine:
             self.consecutive_wins += 1
             self.consecutive_losses = 0
             if self.accumulation_mode:
-                reserva = lucro_brl * 0.30
-                self.safe_reserve_brl += reserva
+                self.safe_reserve_brl += lucro_brl * 0.30
         elif lucro_brl < 0:
             loss = abs(lucro_brl)
             self.total_losses_brl += loss
@@ -634,11 +443,6 @@ class TradingEngine:
             self.consecutive_wins = 0
             if self.consecutive_losses >= 5:
                 self.pause_until = now + timedelta(minutes=30)
-                self.logger.warning(
-                    "[%s] 5 perdas consecutivas: pausando novas entradas ate %s",
-                    self.mode.upper(),
-                    self.pause_until.isoformat(timespec="seconds"),
-                )
 
     def on_price(
         self,
@@ -652,7 +456,10 @@ class TradingEngine:
 
         now = now or datetime.utcnow()
         volume = float((candle_data or {}).get("volume", 0.0))
-        self.strategy.update_price(price, volume=volume)
+        high = float((candle_data or {}).get("high", price))
+        low = float((candle_data or {}).get("low", price))
+
+        self.strategy.update_tick(price=price, high=high, low=low, volume=volume)
         equity_before = self._current_equity_total(price)
         self._update_equity_stats(price, now)
 
@@ -662,15 +469,20 @@ class TradingEngine:
             self.pause_until = None
 
         if self.paused_by_drawdown:
-            self.logger.info("[%s] pausado por drawdown %.2f%%", self.mode, self.current_drawdown_pct)
             return {"trade": False, "reason": "pausado_drawdown", "drawdown": self.current_drawdown_pct}
 
-        signal_ctx = self.strategy.evaluate_signal(has_position=self.position is not None)
+        signal_ctx = self.strategy.evaluate(has_position=self.position is not None, selected_mode=self.selected_strategy_mode)
         self.last_signal_context = dict(signal_ctx)
-        short_sma = float(signal_ctx.get("short_sma") or 0.0)
-        long_sma = float(signal_ctx.get("long_sma") or 0.0)
-        trend_sma = float(signal_ctx.get("trend_sma") or 0.0)
-        trend = str(signal_ctx.get("trend") or "indefinida")
+        self.active_strategy_mode = str(signal_ctx.get("active_mode") or self.active_strategy_mode)
+
+        # contabiliza apenas cruzamentos de tendência
+        if bool(signal_ctx.get("ema9_prev") is not None and signal_ctx.get("ema21_prev") is not None):
+            ema9_prev = float(signal_ctx.get("ema9_prev") or 0.0)
+            ema21_prev = float(signal_ctx.get("ema21_prev") or 0.0)
+            ema9_now = float(signal_ctx.get("ema9") or 0.0)
+            ema21_now = float(signal_ctx.get("ema21") or 0.0)
+            if ema9_prev <= ema21_prev and ema9_now > ema21_now:
+                self.total_cross += 1
 
         if self.position:
             should_exit, exit_reason = self.risk_manager.evaluate_exit(self.position, price)
@@ -678,102 +490,76 @@ class TradingEngine:
                 return self._close_position(price, exit_reason, now, technical_reason="saida_por_risco")
 
             if signal_ctx.get("signal") == "sell":
-                return self._close_position(price, "SMA_EXIT", now, technical_reason=str(signal_ctx.get("reason") or "sma"))
+                return self._close_position(price, "SIGNAL_EXIT", now, technical_reason=str(signal_ctx.get("reason") or "sinal"))
 
-            self.logger.info(
-                "[%s] NAO VENDEU | motivo=%s | sma9=%.2f | sma21=%.2f | sma50=%.2f | tendencia=%s",
-                self.mode.upper(),
-                str(signal_ctx.get("reason") or "manter_posicao"),
-                short_sma,
-                long_sma,
-                trend_sma,
-                trend,
-            )
-            print(
-                f"[{self.mode.upper()}] NO-SELL | motivo={str(signal_ctx.get('reason') or 'manter_posicao')} | "
-                f"sma9={short_sma:.2f} sma21={long_sma:.2f} sma50={trend_sma:.2f} | tendencia={trend}"
-            )
             return {"trade": False, "reason": "posicao_aberta", "drawdown": self.current_drawdown_pct}
 
         if signal_ctx.get("signal") != "buy":
+            self.cross_filtrados += 1
             self._append_near_trade_log(now, signal_ctx)
-            self.logger.info(
-                "[%s] NAO COMPROU | motivo=%s | sma9=%.2f | sma21=%.2f | sma50=%.2f | tendencia=%s",
-                self.mode.upper(),
-                str(signal_ctx.get("reason") or "sem_sinal"),
-                short_sma,
-                long_sma,
-                trend_sma,
-                trend,
-            )
-            print(
-                f"[{self.mode.upper()}] NO-BUY | motivo={str(signal_ctx.get('reason') or 'sem_sinal')} | "
-                f"sma9={short_sma:.2f} sma21={long_sma:.2f} sma50={trend_sma:.2f} | tendencia={trend}"
-            )
             return {"trade": False, "reason": str(signal_ctx.get("reason") or "sem_sinal"), "drawdown": self.current_drawdown_pct}
 
         self._update_risk_regime(signal_ctx)
 
         if not self._can_open_trade(now):
-            self._append_near_trade_log(now, signal_ctx)
-            self.logger.info(
-                "[%s] NAO COMPROU | motivo=filtro_overtrading | sma9=%.2f | sma21=%.2f | sma50=%.2f | tendencia=%s",
-                self.mode.upper(),
-                short_sma,
-                long_sma,
-                trend_sma,
-                trend,
-            )
+            self._append_near_trade_log(now, {**signal_ctx, "reason": "filtro_overtrading"})
             return {"trade": False, "reason": "filtro_overtrading", "drawdown": self.current_drawdown_pct}
 
-        previous_low = signal_ctx.get("previous_low")
-        if previous_low is None:
-            return {"trade": False, "reason": "sem_stop_minima_anterior", "drawdown": self.current_drawdown_pct}
+        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
+        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
 
         equity_for_risk = self._equity_for_risk(price)
         plan = self.risk_manager.build_position_plan(
             equity_brl=equity_for_risk,
             available_brl=self.execution.available_brl(),
             entry_price=price,
-            stop_price=float(previous_low),
+            stop_price=float(stop_price),
+            take_price=float(take_price),
             max_buy_brl=self.max_buy_brl,
             risk_per_trade_pct=self.current_risk_per_trade_pct,
         )
         if not plan:
+            self._append_near_trade_log(now, {**signal_ctx, "reason": "sem_position_size"})
             return {"trade": False, "reason": "sem_position_size", "drawdown": self.current_drawdown_pct}
 
+        self.cross_executados += 1
         return self._open_position(
             plan,
             now,
             saldo_antes=equity_before,
-            motivo_entrada=str(signal_ctx.get("reason") or "sma_entry"),
+            motivo_entrada=str(signal_ctx.get("reason") or "entry"),
             strategy_context=signal_ctx,
         )
 
     def force_buy(self, price_brl: float, motivo: str = "manual") -> float:
-        equity = self._equity_for_risk(price_brl)
-        signal_ctx = self.strategy.evaluate_signal(has_position=False)
-        previous_low = signal_ctx.get("previous_low")
-        if previous_low is None:
-            previous_low = float(price_brl) * 0.995
+        if self.position:
+            return 0.0
 
+        price = float(price_brl)
+        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
+        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
+        equity = self._equity_for_risk(price)
+
+        signal_ctx = self.strategy.evaluate(has_position=False, selected_mode=self.selected_strategy_mode)
         self._update_risk_regime(signal_ctx)
+
         plan = self.risk_manager.build_position_plan(
             equity_brl=equity,
             available_brl=self.execution.available_brl(),
-            entry_price=float(price_brl),
-            stop_price=float(previous_low),
+            entry_price=price,
+            stop_price=stop_price,
+            take_price=take_price,
             max_buy_brl=self.max_buy_brl,
             risk_per_trade_pct=self.current_risk_per_trade_pct,
         )
-        if not plan or self.position:
+        if not plan:
             return 0.0
 
         opened = self._open_position(
             plan,
             datetime.utcnow(),
             motivo_entrada=motivo,
-            saldo_antes=self.execution.total_balance_brl(float(price_brl)),
+            saldo_antes=self.execution.total_balance_brl(price),
             strategy_context=signal_ctx,
         )
         return float(opened.get("btc", 0.0)) if opened.get("trade") else 0.0
@@ -788,7 +574,7 @@ class TradingEngine:
         self,
         plan: PositionPlan,
         now: datetime,
-        motivo_entrada: str = "sma_crossover",
+        motivo_entrada: str = "strategy",
         saldo_antes: float | None = None,
         strategy_context: dict | None = None,
     ) -> dict[str, Any]:
@@ -835,27 +621,8 @@ class TradingEngine:
             "timestamp": now.isoformat(timespec="seconds"),
             "reason": motivo_entrada,
             "risk_per_trade_pct": plan.risk_per_trade_pct,
+            "active_mode": str((strategy_context or {}).get("active_mode") or self.active_strategy_mode),
         }
-
-        saldo_total = self.execution.total_balance_brl(plan.entry_price)
-        short_sma = float((strategy_context or {}).get("short_sma") or 0.0)
-        long_sma = float((strategy_context or {}).get("long_sma") or 0.0)
-        trend_sma = float((strategy_context or {}).get("trend_sma") or 0.0)
-
-        print(
-            f"[{self.mode.upper()}] BUY | entrada={plan.entry_price:.2f} | risco={plan.risk_pct:.2f}% "
-            f"| alocacao={quote_brl:.2f} | risco_trade={plan.risk_per_trade_pct:.2f}% | "
-            f"stop={plan.stop_loss:.2f} | tp={plan.take_profit:.2f} | taxa={fee_brl:.2f} | saldo={saldo_total:.2f}"
-        )
-        self.logger.info(
-            "[%s] ENTRADA | motivo=%s | sma9=%.2f | sma21=%.2f | sma50=%.2f | tendencia=%s",
-            self.mode.upper(),
-            motivo_entrada,
-            short_sma,
-            long_sma,
-            trend_sma,
-            str((strategy_context or {}).get("trend") or "indefinida"),
-        )
 
         return {
             "trade": True,
@@ -864,6 +631,7 @@ class TradingEngine:
             "risk_pct": plan.risk_pct,
             "entry": plan.entry_price,
             "risk_per_trade_pct": plan.risk_per_trade_pct,
+            "reason": motivo_entrada,
         }
 
     def _close_position(
@@ -883,9 +651,8 @@ class TradingEngine:
 
         pnl_brl = amount_brl - pos.entry_spent_brl
         pnl_pct = (pnl_brl / pos.entry_spent_brl) * 100 if pos.entry_spent_brl > 0 else 0.0
-        lucro = pnl_brl
-        self.lucro_hoje_brl += lucro
-        self._register_trade_result(lucro, now)
+        self.lucro_hoje_brl += pnl_brl
+        self._register_trade_result(pnl_brl, now)
 
         saldo_depois = self.execution.total_balance_brl(price_brl)
         if self.trade_manager:
@@ -917,24 +684,14 @@ class TradingEngine:
                 "entrada": pos.entry_price,
                 "saida": price_brl,
                 "lucro": pnl_brl,
+                "lucro_pct": pnl_pct,
                 "motivo": motivo_saida,
+                "active_mode": self.active_strategy_mode,
+                "technical_reason": technical_reason,
             }
         )
         if len(self.trade_history) > 400:
             self.trade_history = self.trade_history[-400:]
-
-        print(
-            f"[{self.mode.upper()}] SELL | saida={price_brl:.2f} | lucro={pnl_pct:+.2f}% | "
-            f"motivo={motivo_saida} | taxa={fee_brl:.2f} | saldo={saldo_depois:.2f}"
-        )
-        self.logger.info(
-            "[%s] SAIDA | motivo=%s | tecnico=%s | pnl_brl=%.2f | pnl_pct=%.2f%%",
-            self.mode.upper(),
-            motivo_saida,
-            technical_reason,
-            pnl_brl,
-            pnl_pct,
-        )
 
         self.position = None
         self.current_exposure_brl = 0.0
@@ -961,9 +718,8 @@ class TradingEngine:
         if not self.last_trade_at:
             return True
 
-        minimo = max(180, self.config.overtrading.min_seconds_between_trades)
-        delta = now - self.last_trade_at
-        return delta >= timedelta(seconds=minimo)
+        minimo = max(60, self.config.overtrading.min_seconds_between_trades)
+        return (now - self.last_trade_at) >= timedelta(seconds=minimo)
 
     def _prune_trade_window(self, now: datetime) -> None:
         limit = now - timedelta(hours=1)
@@ -974,13 +730,14 @@ class TradingEngine:
         self.near_trade_logs.append(
             {
                 "data": now.isoformat(timespec="seconds"),
-                "reason": str(signal_ctx.get("reason") or ""),
-                "sma9": float(signal_ctx.get("short_sma") or 0.0),
-                "sma21": float(signal_ctx.get("long_sma") or 0.0),
-                "sma50": float(signal_ctx.get("trend_sma") or 0.0),
-                "rsi": float(signal_ctx.get("rsi") or 0.0),
-                "volume_status": str(signal_ctx.get("volume_status") or "indefinido"),
+                "price_btc": float(signal_ctx.get("price") or 0.0),
+                "ema9": float(signal_ctx.get("ema9") or 0.0),
+                "ema21": float(signal_ctx.get("ema21") or 0.0),
                 "distancia_percentual": float(signal_ctx.get("distancia_percentual") or 0.0),
+                "slope": float(signal_ctx.get("slope_ema9") or 0.0),
+                "reason": str(signal_ctx.get("reason") or ""),
+                "active_mode": str(signal_ctx.get("active_mode") or self.active_strategy_mode),
+                "atr": float(signal_ctx.get("atr") or 0.0),
             }
         )
         if len(self.near_trade_logs) > 500:
@@ -1035,34 +792,35 @@ class TradingEngine:
         equity_total = self.execution.total_balance_brl(price_brl)
         equity_operacional = max(0.0, equity_total - self.safe_reserve_brl)
         profit_factor = self._current_profit_factor()
-        if profit_factor == float("inf"):
-            profit_factor_value = 999.0
-        else:
-            profit_factor_value = profit_factor
+        profit_factor_value = 999.0 if profit_factor == float("inf") else profit_factor
+
         exposicao_pct = (self.current_exposure_brl / equity_operacional) * 100.0 if equity_operacional > 0 else 0.0
         total_trades = len(self.gain_values) + len(self.loss_values)
         win_rate = (len(self.gain_values) / total_trades) if total_trades > 0 else 0.0
         avg_gain = (sum(self.gain_values) / len(self.gain_values)) if self.gain_values else 0.0
         avg_loss = (sum(self.loss_values) / len(self.loss_values)) if self.loss_values else 0.0
         expectancy = (win_rate * avg_gain) - ((1.0 - win_rate) * avg_loss)
-        if self.current_drawdown_pct < 6.0:
-            risk_status = "verde"
-        elif self.current_drawdown_pct < 10.0:
-            risk_status = "amarelo"
-        else:
-            risk_status = "vermelho"
+
+        ema9 = float(self.last_signal_context.get("ema9") or 0.0)
+        ema21 = float(self.last_signal_context.get("ema21") or 0.0)
+        slope = float(self.last_signal_context.get("slope_ema9") or 0.0)
+        dist_pct = float(self.last_signal_context.get("distancia_percentual") or 0.0)
+        atr = float(self.last_signal_context.get("atr") or 0.0)
+        atr_gate = float(self.last_signal_context.get("atr_gate") or 0.0)
 
         confluence = {
-            "rsi_ok": float(self.last_signal_context.get("rsi") or 100.0) < 40.0,
-            "distancia_ok": float(self.last_signal_context.get("distancia_percentual") or 0.0) >= 0.003,
-            "volume_ok": str(self.last_signal_context.get("volume_status") or "baixo") == "alto",
-            "bollinger_ok": float(self.last_signal_context.get("price") or 0.0) <= float(self.last_signal_context.get("bb_lower") or 0.0),
+            "ema_above_sma": ema9 > ema21 if ema21 > 0 else False,
+            "sma_slope_up": slope > 0,
+            "low_above_ema": True,
+            "distancia_ok": (dist_pct > 0) and (atr > 0) and ((abs(ema9 - ema21)) > atr_gate),
         }
         confluence_ok_count = sum(1 for v in confluence.values() if v)
-        confluence["veredito"] = "Confluência confirmada" if confluence_ok_count >= 3 else "Aguardando confluência"
+        confluence["veredito"] = "Confluencia confirmada" if confluence_ok_count >= 3 else "Aguardando confluencia"
 
         return {
             "mode": self.mode,
+            "strategy_mode_selected": self.selected_strategy_mode,
+            "strategy_mode_active": self.active_strategy_mode,
             "price": price_brl,
             "saldo_brl": self.execution.available_brl(),
             "btc": self.execution.btc_balance(),
@@ -1099,7 +857,13 @@ class TradingEngine:
             "avg_gain": avg_gain,
             "avg_loss": avg_loss,
             "expectancy": expectancy,
-            "risk_status": risk_status,
+            "risk_status": "verde" if self.current_drawdown_pct < 6 else "amarelo" if self.current_drawdown_pct < 10 else "vermelho",
             "confluence": confluence,
             "last_signal_context": self.last_signal_context,
+            "total_cross": self.total_cross,
+            "cross_filtrados": self.cross_filtrados,
+            "cross_executados": self.cross_executados,
+            "trades_lucrativos": len(self.gain_values),
+            "trades_prejuizo": len(self.loss_values),
+            "lucro_total_brl": self.lucro_hoje_brl,
         }
