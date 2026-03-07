@@ -4,42 +4,58 @@ import json
 from pathlib import Path
 from typing import Any
 
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.json"
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "capital_total": 300,
+    "risk_per_trade": 0.02,
+    "breakout_risk": 0.30,
+    "binance_fee": 0.001,
+    "symbol": "BTCUSDT",
     "modo": "simulacao",
     "trading_mode": "auto",
+    "drawdown": 12.0,
+    "position_scaling": [0.02, 0.02, 0.03],
+    "max_position_size": 0.30,
+    # compatibilidade com UI atual
     "perfil": "Conservador",
     "acumular_saldo": False,
-    "saldo_inicial": 10000.0,
-    "stop": 0.6,
-    "take": 1.2,
-    "valor_trade": 5.0,
-    "drawdown": 12.0,
 }
+
+
+def _with_derived_fields(cfg: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cfg)
+    capital = float(out.get("capital_total", 300))
+    risk_pct = float(out.get("risk_per_trade", 0.02))
+    out["saldo_inicial"] = capital
+    out["valor_trade"] = max(0.1, risk_pct * 100.0)
+    out.setdefault("stop", 0.4)
+    out.setdefault("take", 0.8)
+    return out
 
 
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         save_config(DEFAULT_CONFIG)
-        return dict(DEFAULT_CONFIG)
+        return _with_derived_fields(DEFAULT_CONFIG)
 
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as fp:
             loaded = json.load(fp)
     except Exception:
         save_config(DEFAULT_CONFIG)
-        return dict(DEFAULT_CONFIG)
+        return _with_derived_fields(DEFAULT_CONFIG)
 
     merged = dict(DEFAULT_CONFIG)
     if isinstance(loaded, dict):
         merged.update(loaded)
-
+    merged = _with_derived_fields(merged)
     save_config(merged)
     return merged
 
 
 def save_config(config: dict[str, Any]) -> None:
+    payload = _with_derived_fields(config)
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with CONFIG_PATH.open("w", encoding="utf-8") as fp:
-        json.dump(config, fp, ensure_ascii=False, indent=2)
+        json.dump(payload, fp, ensure_ascii=False, indent=2)

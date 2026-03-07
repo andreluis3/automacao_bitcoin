@@ -41,20 +41,34 @@ class TradingApp(ctk.CTk):
     def _criar_layout(self) -> None:
         header = ctk.CTkFrame(self, fg_color="#1f232a", corner_radius=14)
         header.pack(fill="x", padx=18, pady=(14, 8))
-        self.preco_label = ctk.CTkLabel(
-            header,
-            text="BTC/USDT: --",
-            font=("Arial", 18, "bold"),
-        )
-        self.preco_label.pack(side="left", padx=16, pady=12)
+        header.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        header.grid_rowconfigure((0, 1), weight=1)
+
+        self.preco_label = ctk.CTkLabel(header, text="BTC/USDT: --", font=("Arial", 14, "bold"))
+        self.preco_label.grid(row=0, column=0, sticky="w", padx=16, pady=8)
+        self.header_btc_value = ctk.CTkLabel(header, text="$0.00", font=("Arial", 18, "bold"))
+        self.header_btc_value.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
+
+        self.header_saldo = ctk.CTkLabel(header, text="SALDO\nR$0.00", justify="left", font=("Arial", 14, "bold"))
+        self.header_saldo.grid(row=0, column=1, rowspan=2, sticky="w", padx=10, pady=8)
+        self.header_drawdown = ctk.CTkLabel(header, text="DRAWDOWN\n0.00%", justify="left", font=("Arial", 14, "bold"))
+        self.header_drawdown.grid(row=0, column=2, rowspan=2, sticky="w", padx=10, pady=8)
+        self.header_strategy = ctk.CTkLabel(header, text="ESTRATEGIA\nAUTO", justify="left", font=("Arial", 14, "bold"))
+        self.header_strategy.grid(row=0, column=3, rowspan=1, sticky="w", padx=10, pady=(8, 2))
+        self.header_fees = ctk.CTkLabel(header, text="TAXAS\nR$0.00", justify="left", font=("Arial", 12, "bold"))
+        self.header_fees.grid(row=1, column=2, sticky="w", padx=10, pady=(0, 10))
+        self.header_position = ctk.CTkLabel(header, text="POSICAO\nNONE", justify="left", font=("Arial", 12, "bold"))
+        self.header_position.grid(row=1, column=3, sticky="w", padx=10, pady=(0, 10))
 
         self.tabs = ctk.CTkTabview(self, fg_color="#161a20")
         self.tabs.pack(fill="both", expand=True, padx=18, pady=(0, 12))
         self.tab_trading = self.tabs.add("Trading")
         self.tab_performance = self.tabs.add("Performance")
+        self.tab_registro = self.tabs.add("Registro Mensal")
 
         self._criar_tab_trading()
         self._criar_tab_performance()
+        self._criar_tab_registro()
 
     def _criar_tab_trading(self) -> None:
         self.tab_trading.grid_columnconfigure(0, weight=4)
@@ -205,6 +219,27 @@ class TradingApp(ctk.CTk):
         self.confluence_bb.pack(side="left", padx=10, pady=8)
         self.confluence_veredito.pack(side="right", padx=10, pady=8)
 
+    def _criar_tab_registro(self) -> None:
+        root = ctk.CTkFrame(self.tab_registro, fg_color="#161a20")
+        root.pack(fill="both", expand=True, padx=8, pady=8)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(1, weight=1)
+        root.grid_rowconfigure(2, weight=1)
+
+        self.registro_cards = ctk.CTkFrame(root, fg_color="#1f232a", corner_radius=12)
+        self.registro_cards.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.registro_cards.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+        self.reg_lucro_mes = self._create_big_card(self.registro_cards, 0, "Lucro do mês", "R$ 0.00")
+        self.reg_trades = self._create_big_card(self.registro_cards, 1, "Trades executados", "0")
+        self.reg_sessoes = self._create_big_card(self.registro_cards, 2, "Sessões do bot", "0")
+        self.reg_best = self._create_big_card(self.registro_cards, 3, "Melhor dia", "R$ 0.00")
+        self.reg_worst = self._create_big_card(self.registro_cards, 4, "Pior dia", "R$ 0.00")
+
+        self.reg_table = ctk.CTkTextbox(root, state="disabled")
+        self.reg_table.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        self.reg_chart = ctk.CTkTextbox(root, state="disabled")
+        self.reg_chart.grid(row=2, column=0, sticky="nsew")
+
     def _create_card(self, parent, title: str, value: str):
         card = ctk.CTkFrame(parent, fg_color="#111827", corner_radius=10)
         card.pack(fill="x", padx=12, pady=(10, 0))
@@ -333,21 +368,22 @@ class TradingApp(ctk.CTk):
             )
         )
 
+        self.perf_ax_equity.cla()
+        self.perf_ax_equity.set_facecolor("#161a20")
+        self.perf_ax_equity.tick_params(colors="#cbd5e1")
+        self.perf_ax_equity.grid(color="#334155", alpha=0.35)
         if equity_history:
             eq = np.array(equity_history)
-            self.perf_equity_line.set_data(np.arange(len(eq)), eq)
-        else:
-            self.perf_equity_line.set_data([], [])
-
-        if benchmark_history and equity_history:
-            bm = np.array(benchmark_history[: len(equity_history)])
-            if len(bm) > 0 and bm[0] > 0:
-                bm_norm = (bm / bm[0]) * equity_history[0]
-                self.perf_benchmark_line.set_data(np.arange(len(bm_norm)), bm_norm)
-            else:
-                self.perf_benchmark_line.set_data([], [])
-        else:
-            self.perf_benchmark_line.set_data([], [])
+            x = np.arange(len(eq))
+            self.perf_ax_equity.plot(x, eq, color="#22c55e", linewidth=2.0, label="Equity")
+            peak = np.maximum.accumulate(eq)
+            self.perf_ax_equity.fill_between(x, eq, peak, where=peak >= eq, color="#ef4444", alpha=0.15, label="Drawdown")
+            if benchmark_history:
+                bm = np.array(benchmark_history[: len(equity_history)])
+                if len(bm) > 0 and bm[0] > 0:
+                    bm_norm = (bm / bm[0]) * equity_history[0]
+                    self.perf_ax_equity.plot(np.arange(len(bm_norm)), bm_norm, color="#94a3b8", linewidth=1.6, label="Benchmark BTC")
+        self.perf_ax_equity.legend(loc="upper left")
 
         profits = [float(t.get("lucro", 0.0)) for t in trades]
         self.perf_ax_hist.cla()
@@ -358,8 +394,6 @@ class TradingApp(ctk.CTk):
             self.perf_ax_hist.hist(profits, bins=min(30, max(8, int(len(profits) / 2))), color="#38bdf8", alpha=0.85)
             self.perf_ax_hist.set_title("Histograma de Trades", color="#cbd5e1", fontsize=10)
 
-        self.perf_ax_equity.relim()
-        self.perf_ax_equity.autoscale_view()
         self.perf_canvas.draw_idle()
 
         self._fill_table_box(
@@ -395,14 +429,47 @@ class TradingApp(ctk.CTk):
         self.confluence_vol.configure(text=f"ATR Gate: {'🟢' if confluence.get('distancia_ok') else '🔴'}")
         self.confluence_bb.configure(text=f"Regime: {str(snapshot.get('strategy_mode_active', 'lateral')).upper()}")
         self.confluence_veredito.configure(text=str(confluence.get("veredito") or "Aguardando confluencia"))
+        self._update_registro_tab(snapshot)
+
+    def _update_registro_tab(self, snapshot: dict) -> None:
+        trades = list(snapshot.get("trade_history") or [])
+        self.reg_lucro_mes.configure(text=f"R$ {float(snapshot.get('monthly_profit', 0.0)):,.2f}")
+        self.reg_trades.configure(text=f"{int(snapshot.get('trades_count_db', 0) or 0)}")
+        self.reg_sessoes.configure(text=f"{int(snapshot.get('sessions_count', 0) or 0)}")
+        self.reg_best.configure(text=f"R$ {float(snapshot.get('best_day', 0.0)):,.2f}")
+        self.reg_worst.configure(text=f"R$ {float(snapshot.get('worst_day', 0.0)):,.2f}")
+
+        lines = ["Data       | Trades | Lucro dia | Taxas | Saldo final", "-" * 58]
+        by_day: dict[str, dict[str, float]] = {}
+        for t in trades:
+            day = str(t.get("data", ""))[:10]
+            if not day:
+                continue
+            row = by_day.setdefault(day, {"trades": 0.0, "lucro": 0.0})
+            row["trades"] += 1
+            row["lucro"] += float(t.get("lucro", 0.0))
+        for day, vals in sorted(by_day.items(), reverse=True):
+            lines.append(f"{day:10} | {int(vals['trades']):6d} | {vals['lucro']:9.2f} | {'-':5} | {'-':11}")
+        self._set_textbox_content(self.reg_table, "\n".join(lines))
+
+        cum = 0.0
+        chart_lines = ["Lucro acumulado do mes", "-" * 28]
+        for day, vals in sorted(by_day.items()):
+            cum += float(vals["lucro"])
+            chart_lines.append(f"{day}: {cum:+.2f}")
+        self._set_textbox_content(self.reg_chart, "\n".join(chart_lines))
 
     def _fill_table_box(self, box: ctk.CTkTextbox, rows: list[dict], header: str, formatter) -> None:
         lines = [header, "-" * len(header)]
         lines.extend(formatter(row) for row in rows)
         content = "\n".join(lines) if lines else "-"
+        self._set_textbox_content(box, content)
+
+    def _set_textbox_content(self, box: ctk.CTkTextbox, content: str) -> None:
         box.configure(state="normal")
         box.delete("1.0", "end")
         box.insert("end", content)
+        box.see("end")
         box.configure(state="disabled")
 
     def loop_principal(self) -> None:

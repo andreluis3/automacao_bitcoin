@@ -8,6 +8,7 @@ from math import sqrt
 from statistics import mean, pstdev
 from typing import Any
 
+from core.risk_manager import calculate_position_size, scale_position
 from core.strategy_engine import StrategyConfig, StrategyEngine
 
 
@@ -62,7 +63,10 @@ class Position:
 
 class RiskManager:
     def __init__(self, risk_config: RiskConfig):
-        self.config = risk_config
+        self.initial_alloc_pct = 0.10
+        self.scale_step_pct = 0.10
+        self.max_position_size = 0.30
+        self.position_alloc_pct = self.initial_alloc_pct
 
     def build_position_plan(
         self,
@@ -276,6 +280,10 @@ class TradingEngine:
 
         self.selected_strategy_mode = "auto"
         self.active_strategy_mode = "lateral"
+        self.breakout_risk_pct = 30.0
+        self.scaling_steps = [0.02, 0.02, 0.03]
+        self.max_position_size = 0.30
+        self.position_alloc_pct = 0.0
 
         self.initial_balance_brl = 0.0
         self.max_buy_brl = 0.0
@@ -318,6 +326,20 @@ class TradingEngine:
         self.cross_filtrados = 0
         self.cross_executados = 0
 
+    def set_sizing_config(
+        self,
+        risk_per_trade_pct: float,
+        breakout_risk_pct: float,
+        scaling_steps: list[float] | None = None,
+        max_position_size: float = 0.30,
+    ) -> None:
+        rp = max(0.1, min(3.0, float(risk_per_trade_pct)))
+        self.config.risk.risk_per_trade_pct_base = rp
+        self.breakout_risk_pct = max(rp, min(100.0, float(breakout_risk_pct)))
+        if scaling_steps:
+            self.scaling_steps = [max(0.0, float(v)) for v in scaling_steps]
+        self.max_position_size = max(0.05, min(1.0, float(max_position_size)))
+
     def configure(self, initial_balance_brl: float, max_buy_brl: float, max_sell_brl: float) -> None:
         self.initial_balance_brl = float(initial_balance_brl)
         self.max_buy_brl = float(max_buy_brl)
@@ -357,6 +379,7 @@ class TradingEngine:
         self.total_cross = 0
         self.cross_filtrados = 0
         self.cross_executados = 0
+        self.position_alloc_pct = 0.0
 
     def set_drawdown_limit(self, pct: float) -> None:
         self.config.drawdown_pause_pct = max(0.5, float(pct))
@@ -492,6 +515,24 @@ class TradingEngine:
             if signal_ctx.get("signal") == "sell":
                 return self._close_position(price, "SIGNAL_EXIT", now, technical_reason=str(signal_ctx.get("reason") or "sinal"))
 
+            # Position scaling: adiciona posição gradualmente enquanto tendência segue válida
+            if self._can_scale_position(signal_ctx):
+                strength = self._signal_strength(signal_ctx)
+                new_alloc_pct = scale_position(
+                    signal_strength=strength,
+                    scaling_steps=self.scaling_steps,
+                    current_alloc_pct=self.position_alloc_pct,
+                    max_position_size=self.max_position_size,
+                )
+                add_pct = max(0.0, new_alloc_pct - self.position_alloc_pct)
+                if add_pct > 0:
+                    capital_total = self.execution.get_equity()
+                    add_value = capital_total * add_pct
+                    scaled = self._scale_in_position(price, add_value, now, signal_ctx)
+                    if scaled.get("trade"):
+                        self.position_alloc_pct = new_alloc_pct
+                        return scaled
+
             return {"trade": False, "reason": "posicao_aberta", "drawdown": self.current_drawdown_pct}
 
         if signal_ctx.get("signal") != "buy":
@@ -505,24 +546,30 @@ class TradingEngine:
             self._append_near_trade_log(now, {**signal_ctx, "reason": "filtro_overtrading"})
             return {"trade": False, "reason": "filtro_overtrading", "drawdown": self.current_drawdown_pct}
 
-        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
-        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
+        # capital total da conta
+        capital_total = self.execution.get_equity()
 
-        equity_for_risk = self._equity_for_risk(price)
-        plan = self.risk_manager.build_position_plan(
-            equity_brl=equity_for_risk,
-            available_brl=self.execution.available_brl(),
-            entry_price=price,
-            stop_price=float(stop_price),
-            take_price=float(take_price),
-            max_buy_brl=self.max_buy_brl,
-            risk_per_trade_pct=self.current_risk_per_trade_pct,
+        # posição inicial = 10%
+        self.position_alloc_pct = self.initial_alloc_pct
+
+        alloc_pct = self.position_alloc_pct
+
+        # valor em reais da posição
+        trade_value = capital_total * alloc_pct
+
+        # cria plano de posição
+        plan = self._build_plan_from_value(
+            price=price,
+            trade_value=trade_value,
+            risk_per_trade_pct=self.config.stop_loss_pct,
         )
+
         if not plan:
             self._append_near_trade_log(now, {**signal_ctx, "reason": "sem_position_size"})
             return {"trade": False, "reason": "sem_position_size", "drawdown": self.current_drawdown_pct}
 
         self.cross_executados += 1
+
         return self._open_position(
             plan,
             now,
@@ -569,6 +616,96 @@ class TradingEngine:
             return 0.0
         closed = self._close_position(float(price_brl), motivo, datetime.utcnow(), technical_reason=motivo)
         return float(closed.get("amount_brl", 0.0)) if closed.get("trade") else 0.0
+
+    def _build_plan_from_value(self, price: float, trade_value: float, risk_per_trade_pct: float) -> PositionPlan | None:
+        if price <= 0 or trade_value <= 0:
+            return None
+        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
+        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
+        qty = trade_value / price
+        if qty <= 0:
+            return None
+        return PositionPlan(
+            quantity=qty,
+            entry_price=price,
+            stop_loss=stop_price,
+            take_profit=take_price,
+            risk_brl=trade_value * (self.config.stop_loss_pct / 100.0),
+            risk_pct=self.config.stop_loss_pct,
+            notional_brl=trade_value,
+            risk_per_trade_pct=risk_per_trade_pct,
+        )
+
+    def _signal_strength(self, signal_ctx: dict[str, Any]) -> float:
+        dist = float(signal_ctx.get("distancia_percentual") or 0.0)
+        slope = abs(float(signal_ctx.get("slope_ema9") or 0.0))
+        atr = float(signal_ctx.get("atr") or 0.0)
+        price = float(signal_ctx.get("price") or 1.0)
+        score = min(1.0, (dist * 20.0) + (slope / max(price, 1.0) * 200.0) + (atr / max(price, 1.0) * 10.0))
+        return max(0.0, score)
+
+    def _is_breakout_context(self, signal_ctx: dict[str, Any]) -> bool:
+        ema9 = float(signal_ctx.get("ema9") or 0.0)
+        ema21 = float(signal_ctx.get("ema21") or 0.0)
+        slope = float(signal_ctx.get("slope_ema9") or 0.0)
+        price = float(signal_ctx.get("price") or 1.0)
+        dist_pct = abs(ema9 - ema21) / max(ema21, 1.0)
+        return bool(
+            signal_ctx.get("active_mode") == "tendencia"
+            and ema9 > ema21
+            and slope > (price * 0.0005)
+            and dist_pct > 0.002
+        )
+
+    def _can_scale_position(self, signal_ctx: dict[str, Any]) -> bool:
+        if self.position is None:
+            return False
+        if self.position_alloc_pct >= self.max_position_size:
+            return False
+        if self.last_trade_at is not None:
+            delta = datetime.utcnow() - self.last_trade_at
+            if delta < timedelta(seconds=max(60, self.config.overtrading.min_seconds_between_trades)):
+                return False
+        self._prune_trade_window(datetime.utcnow())
+        if len(self.trade_entries_last_hour) >= self.config.overtrading.max_trades_per_hour:
+            return False
+        return (
+            str(signal_ctx.get("active_mode") or "") == "tendencia"
+            and float(signal_ctx.get("ema9") or 0.0) > float(signal_ctx.get("ema21") or 0.0)
+            and float(signal_ctx.get("slope_ema9") or 0.0) > 0
+        )
+
+    def _scale_in_position(self, price: float, add_value: float, now: datetime, signal_ctx: dict[str, Any]) -> dict[str, Any]:
+        if self.position is None or add_value <= 0:
+            return {"trade": False, "reason": "scale_in_invalido"}
+        btc, fee_brl = self.execution.buy_quote(add_value, price)
+        if btc <= 0:
+            return {"trade": False, "reason": "scale_in_sem_execucao"}
+
+        pos = self.position
+        old_qty = pos.quantity
+        new_qty = old_qty + btc
+        avg_entry = ((pos.entry_price * old_qty) + (price * btc)) / max(new_qty, 1e-9)
+        pos.entry_price = avg_entry
+        pos.quantity = new_qty
+        pos.entry_spent_brl += add_value
+        pos.entry_fee_brl += fee_brl
+        pos.stop_loss = avg_entry * (1.0 - (self.config.stop_loss_pct / 100.0))
+        pos.take_profit = avg_entry * (1.0 + (self.config.take_profit_pct / 100.0))
+        self.current_exposure_brl += add_value
+        self.last_trade_at = now
+        self.trade_entries_last_hour.append(now)
+        self._prune_trade_window(now)
+        self.last_trade = {
+            "side": "BUY",
+            "price": price,
+            "btc": btc,
+            "fee_brl": fee_brl,
+            "timestamp": now.isoformat(timespec="seconds"),
+            "reason": "scale_in",
+            "active_mode": str(signal_ctx.get("active_mode") or self.active_strategy_mode),
+        }
+        return {"trade": True, "side": "BUY", "btc": btc, "entry": price, "reason": "scale_in"}
 
     def _open_position(
         self,
@@ -648,6 +785,8 @@ class TradingEngine:
         amount_brl, fee_brl = self.execution.sell_quantity(pos.quantity, price_brl)
         if amount_brl <= 0:
             return {"trade": False, "reason": "falha_execucao_venda"}
+        self.position_alloc_pct = self.initial_alloc_pct
+
 
         pnl_brl = amount_brl - pos.entry_spent_brl
         pnl_pct = (pnl_brl / pos.entry_spent_brl) * 100 if pos.entry_spent_brl > 0 else 0.0
@@ -694,6 +833,7 @@ class TradingEngine:
             self.trade_history = self.trade_history[-400:]
 
         self.position = None
+        self.position_alloc_pct = 0.0
         self.current_exposure_brl = 0.0
         self._update_equity_stats(price_brl, now)
 

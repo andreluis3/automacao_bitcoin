@@ -2,87 +2,107 @@ import customtkinter as ctk
 
 
 class JanelaSimulacao(ctk.CTkToplevel):
-    def __init__(self, parent, config: dict, on_save, on_start):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.title("Configuração Simulação")
-        self.geometry("540x620")
-        self.minsize(520, 580)
-        self.transient(parent)
-        self.after(80, self.grab_set)
 
-        self._on_save_callback = on_save
-        self._on_start_callback = on_start
-        self._config = config
+        self.title("Configuração Simulação")
+        self.geometry("500x500")
+
+        self.transient(parent)  # liga à janela principal
+        self.after(100, self.grab_set)  # ← solução segura
+
+        label = ctk.CTkLabel(self, text="Configurações de Simulação")
+        label.pack(pady=20)
 
         self._criar_layout()
-        self._preencher_campos()
 
     def _criar_layout(self) -> None:
-        container = ctk.CTkScrollableFrame(self)
+        container = ctk.CTkScrollableFrame(self, fg_color="#1e1f22")
         container.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ctk.CTkLabel(container, text="Configuração Inicial", font=("Arial", 18, "bold")).pack(anchor="w", pady=(0, 12))
+        ctk.CTkLabel(
+            container,
+            text="Configuração Inicial",
+            font=("Arial", 18, "bold"),
+        ).pack(anchor="w", pady=(0, 12))
 
-        self.entry_saldo_inicial = self._add_field(container, "Saldo Inicial (R$)")
-        self.entry_valor_trade = self._add_field(container, "Valor por trade (%)")
-        self.entry_drawdown = self._add_field(container, "Drawdown Máximo (%)")
+        self.entry_saldo_inicial_brl = self._adicionar_campo(container, "Saldo Inicial (R$)")
+        self.entry_saldo_inicial_btc = self._adicionar_campo(container, "Saldo Inicial BTC")
+        self.entry_taxa_operacao = self._adicionar_campo(container, "Taxa por operação (%)")
+        self.entry_valor_trade = self._adicionar_campo(container, "Valor por trade (% do saldo)")
+        self.entry_stop_loss = self._adicionar_campo(container, "Stop Loss (%)")
+        self.entry_take_profit = self._adicionar_campo(container, "Take Profit (%)")
+        self.entry_slippage = self._adicionar_campo(container, "Slippage (% opcional)")
 
-        ctk.CTkLabel(container, text="Perfil", font=("Arial", 16, "bold")).pack(anchor="w", pady=(14, 6))
-        self.profile_combo = ctk.CTkComboBox(container, values=["Conservador", "Agressivo"], state="readonly")
-        self.profile_combo.pack(fill="x", pady=(0, 12))
+        estrategia_frame = ctk.CTkFrame(container, fg_color="#2a2d31", corner_radius=12)
+        estrategia_frame.pack(fill="x", pady=(14, 10))
+        ctk.CTkLabel(
+            estrategia_frame,
+            text="Estratégia",
+            font=("Arial", 18, "bold"),
+        ).pack(anchor="w", padx=14, pady=(12, 6))
+        ctk.CTkLabel(
+            estrategia_frame,
+            text="Estratégia Atual",
+            font=("Arial", 14, "bold"),
+            text_color="#d4d4d8",
+        ).pack(anchor="w", padx=14)
+        ctk.CTkLabel(
+            estrategia_frame,
+            text="Cruzamento SMA Rápida x SMA Lenta",
+            font=("Arial", 14),
+            text_color="#e4e4e7",
+        ).pack(anchor="w", padx=14, pady=(4, 12))
 
-        buttons = ctk.CTkFrame(container, fg_color="transparent")
-        buttons.pack(fill="x", pady=(10, 6))
+        ctk.CTkLabel(
+            container,
+            text="Controle de Risco",
+            font=("Arial", 18, "bold"),
+        ).pack(anchor="w", pady=(16, 12))
 
-        ctk.CTkButton(buttons, text="Salvar Configuração", command=self._salvar).pack(fill="x", pady=(0, 8))
-        ctk.CTkButton(buttons, text="Iniciar Simulação", fg_color="#1f8f4e", hover_color="#16a34a", command=self._iniciar).pack(fill="x", pady=(0, 8))
-        ctk.CTkButton(buttons, text="Cancelar", fg_color="#374151", hover_color="#4b5563", command=self.destroy).pack(fill="x")
+        self.entry_max_trades = self._adicionar_campo(container, "Máximo de trades simultâneos")
+        self.entry_max_drawdown = self._adicionar_campo(container, "Máximo de drawdown permitido (%)")
 
-    def _add_field(self, parent, label: str):
-        ctk.CTkLabel(parent, text=label).pack(anchor="w", pady=(0, 4))
-        e = ctk.CTkEntry(parent)
-        e.pack(fill="x", pady=(0, 10))
-        return e
+        botoes_frame = ctk.CTkFrame(container, fg_color="transparent")
+        botoes_frame.pack(fill="x", pady=(18, 6))
 
-    def _preencher_campos(self) -> None:
-        self.entry_saldo_inicial.insert(0, str(self._config.get("saldo_inicial", 10000)))
-        self.entry_valor_trade.insert(0, str(self._config.get("valor_trade", 5)))
-        self.entry_drawdown.insert(0, str(self._config.get("drawdown", 12)))
-        self.profile_combo.set(str(self._config.get("perfil", "Conservador")))
+        ctk.CTkButton(
+            botoes_frame,
+            text="Salvar Configuração",
+            height=38,
+            fg_color="#334155",
+            hover_color="#475569",
+            command=self._ao_salvar,
+        ).pack(fill="x", pady=(0, 10))
 
-    def _to_float(self, value: str, field_name: str, min_value: float) -> float:
-        raw = str(value).strip().replace(",", ".")
-        if not raw:
-            raise ValueError(f"{field_name} é obrigatório.")
-        num = float(raw)
-        if num < min_value:
-            raise ValueError(f"{field_name} deve ser >= {min_value}.")
-        return num
+        ctk.CTkButton(
+            botoes_frame,
+            text="Iniciar Simulação",
+            height=40,
+            fg_color="#1f8f4e",
+            hover_color="#16a34a",
+            command=self._ao_iniciar,
+        ).pack(fill="x", pady=(0, 10))
 
-    def _collect(self) -> dict:
-        saldo = self._to_float(self.entry_saldo_inicial.get(), "Saldo inicial", 1.0)
-        valor_trade = self._to_float(self.entry_valor_trade.get(), "Valor por trade (%)", 0.1)
-        drawdown = self._to_float(self.entry_drawdown.get(), "Drawdown máximo (%)", 0.5)
-        return {
-            "saldo_inicial": saldo,
-            "valor_trade": min(100.0, valor_trade),
-            "drawdown": drawdown,
-            "perfil": self.profile_combo.get(),
-        }
+        ctk.CTkButton(
+            botoes_frame,
+            text="Cancelar",
+            height=38,
+            fg_color="#374151",
+            hover_color="#4b5563",
+            command=self.destroy,
+        ).pack(fill="x")
 
-    def _salvar(self) -> None:
-        try:
-            data = self._collect()
-            self._on_save_callback(data)
-            self.destroy()
-        except Exception as exc:
-            self.title(f"Configuração Simulação | Erro: {exc}")
+    def _adicionar_campo(self, parent, label: str) -> ctk.CTkEntry:
+        ctk.CTkLabel(parent, text=label, font=("Arial", 14)).pack(anchor="w", pady=(0, 4))
+        entry = ctk.CTkEntry(parent, height=36)
+        entry.pack(fill="x", pady=(0, 10))
+        return entry
 
-    def _iniciar(self) -> None:
-        try:
-            data = self._collect()
-            self._on_save_callback(data)
-            self._on_start_callback()
-            self.destroy()
-        except Exception as exc:
-            self.title(f"Configuração Simulação | Erro: {exc}")
+    def _ao_salvar(self) -> None:
+        # Interface apenas: sem lógica de persistência por enquanto.
+        pass
+
+    def _ao_iniciar(self) -> None:
+        # Interface apenas: sem lógica de execução por enquanto.
+        pass

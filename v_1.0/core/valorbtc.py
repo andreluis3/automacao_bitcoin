@@ -162,9 +162,11 @@ class BTCPriceFeed:
                 self._emit_tick(price, volume)
                 self._log("REST conectado")
             else:
+                self.reconnect()
                 self._maybe_simulate_tick()
         except Exception:
             self._log("REST desconectado")
+            self.reconnect()
             self._maybe_simulate_tick()
         time.sleep(self.rest_interval_sec)
 

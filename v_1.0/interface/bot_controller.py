@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
+import logging
 from pathlib import Path
 import threading
 from typing import Any, Callable
 
+from database.connection import DatabaseManager
 from core.logger import ProfessionalLogger
 from core.trading_engine import BinanceExecutionAdapter, EngineConfig, SimulationExecutionAdapter, TradingEngine
 from core.valorbtc import BTCPriceFeed
@@ -37,6 +39,13 @@ class BotController:
         self._latest_tick_price_brl = 0.0
         self._latest_tick_volume = 0.0
 
+        self.db = DatabaseManager()
+        self.session_id: int | None = None
+        self._open_trade_context: dict[str, Any] | None = None
+        self._last_visual_signal = ""
+        self._last_trading_log_key = ""
+        self._trading_logger, self._performance_logger = self._setup_file_loggers()
+
         self.report_logger = ProfessionalLogger(Path(__file__).resolve().parents[1] / "logs")
 
         self.feed = BTCPriceFeed(
@@ -49,6 +58,29 @@ class BotController:
         )
 
         self.real_api_available = self._check_real_api_available()
+
+    def _setup_file_loggers(self) -> tuple[logging.Logger, logging.Logger]:
+        logs_dir = Path(__file__).resolve().parents[1] / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        trading_logger = logging.getLogger("bot.trading")
+        performance_logger = logging.getLogger("bot.performance")
+        trading_logger.setLevel(logging.INFO)
+        performance_logger.setLevel(logging.INFO)
+        trading_logger.propagate = False
+        performance_logger.propagate = False
+
+        if not trading_logger.handlers:
+            t_handler = logging.FileHandler(logs_dir / "trading.log", encoding="utf-8")
+            t_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s"))
+            trading_logger.addHandler(t_handler)
+
+        if not performance_logger.handlers:
+            p_handler = logging.FileHandler(logs_dir / "performance.log", encoding="utf-8")
+            p_handler.setFormatter(logging.Formatter("%(asctime)s | %(message)s"))
+            performance_logger.addHandler(p_handler)
+
+        return trading_logger, performance_logger
 
     def initial_equity_reference(self) -> float:
         if self.engine is not None:
@@ -63,6 +95,12 @@ class BotController:
             return False
 
     def shutdown(self) -> None:
+        if self.engine is not None and self.session_id is not None:
+            snap = self.engine.get_runtime_snapshot(self.latest_price_brl if self.latest_price_brl > 0 else 1.0)
+            saldo_final = float(snap.get("equity_brl", 0.0))
+            trades_exec = int(snap.get("trades_lucrativos", 0)) + int(snap.get("trades_prejuizo", 0))
+            self.db.end_session(self.session_id, saldo_final=saldo_final, trades_executados=trades_exec)
+            self.session_id = None
         try:
             self.feed.stop()
         except Exception:
@@ -109,6 +147,10 @@ class BotController:
     def update_config(self, partial: dict[str, Any]) -> None:
         for key, value in partial.items():
             self.config[key] = value
+        if "saldo_inicial" in partial:
+            self.config["capital_total"] = float(partial["saldo_inicial"])
+        if "valor_trade" in partial:
+            self.config["risk_per_trade"] = max(0.01, min(0.03, float(partial["valor_trade"]) / 100.0))
         save_config(self.config)
         self.log("Configuração salva.")
 
@@ -122,11 +164,12 @@ class BotController:
             return False, "Modo real bloqueado: API indisponível"
 
         try:
+            fee_rate = float(self.config.get("binance_fee", 0.001))
             if modo == "real":
-                execution = BinanceExecutionAdapter(self.market_data.client)
+                execution = BinanceExecutionAdapter(self.market_data.client, fee_rate=fee_rate)
                 state = "real"
             else:
-                execution = SimulationExecutionAdapter()
+                execution = SimulationExecutionAdapter(fee_rate=fee_rate)
                 state = "simulando"
 
             engine_cfg = EngineConfig(
@@ -141,13 +184,26 @@ class BotController:
             self.engine.set_accumulation_mode(bool(self.config.get("acumular_saldo", False)))
             self.engine.set_strategy_mode(str(self.config.get("trading_mode", "auto")))
 
-            saldo_inicial = float(self.config.get("saldo_inicial", 10000.0))
-            valor_trade_pct = float(self.config.get("valor_trade", 5.0))
+            saldo_inicial = float(self.config.get("capital_total", self.config.get("saldo_inicial", 300.0)))
+            risk_pct = float(self.config.get("risk_per_trade", 0.02)) * 100.0
+            breakout_pct = float(self.config.get("breakout_risk", 0.30)) * 100.0
+            scaling = list(self.config.get("position_scaling", [0.02, 0.02, 0.03]))
+            max_pos = float(self.config.get("max_position_size", 0.30))
+            self.engine.set_sizing_config(
+                risk_per_trade_pct=risk_pct,
+                breakout_risk_pct=breakout_pct,
+                scaling_steps=scaling,
+                max_position_size=max_pos,
+            )
+            valor_trade_pct = max(0.1, risk_pct)
             max_buy = max(1.0, saldo_inicial * (valor_trade_pct / 100.0))
             max_sell = max_buy
             self.engine.configure(initial_balance_brl=saldo_inicial, max_buy_brl=max_buy, max_sell_brl=max_sell)
 
             self.report_logger.reset_session()
+            self.session_id = self.db.start_session(saldo_inicio=saldo_inicial)
+            self._open_trade_context = None
+            self._last_trading_log_key = ""
             self.bot_state = state
             self._pending_on_price = None
             self.feed.simulation_fallback = (modo != "real")
@@ -166,6 +222,12 @@ class BotController:
     def stop_bot(self) -> tuple[bool, str]:
         if self.bot_state == "parado":
             return False, "Bot já está parado"
+        if self.engine is not None and self.session_id is not None:
+            snap = self.engine.get_runtime_snapshot(self.latest_price_brl if self.latest_price_brl > 0 else 1.0)
+            saldo_final = float(snap.get("equity_brl", 0.0))
+            trades_exec = int(snap.get("trades_lucrativos", 0)) + int(snap.get("trades_prejuizo", 0))
+            self.db.end_session(self.session_id, saldo_final=saldo_final, trades_executados=trades_exec)
+            self.session_id = None
         self.bot_state = "parado"
         self._pending_on_price = None
         self.feed.stop()
@@ -281,8 +343,45 @@ class BotController:
                         },
                     )
                     if side == "BUY":
+                        self._open_trade_context = {
+                            "simbolo": str(self.config.get("symbol", "BTCUSDT")),
+                            "entry_price": float(price),
+                            "quantidade": float(result.get("btc", 0.0)),
+                            "hora_entrada": datetime.now().isoformat(timespec="seconds"),
+                            "taxa_entrada": 0.0,
+                        }
                         self.log(f"Entrada realizada | motivo: {reason}")
                     elif side == "SELL":
+                        if self._open_trade_context is not None:
+                            ctx = dict(self._open_trade_context)
+                            lucro = float(result.get("pnl_brl", 0.0))
+                            profit_percent = float(result.get("pnl_pct", 0.0))
+                            exit_price = float(result.get("price") or self.latest_price_brl)
+                            hora_saida = datetime.now().isoformat(timespec="seconds")
+                            taxa = float(result.get("fee_brl", 0.0))
+                            self.db.insert_trade(
+                                simbolo=str(ctx.get("simbolo", "BTCUSDT")),
+                                lado="BUY",
+                                entry_price=float(ctx.get("entry_price", 0.0)),
+                                exit_price=exit_price,
+                                quantidade=float(ctx.get("quantidade", 0.0)),
+                                hora_entrada=str(ctx.get("hora_entrada", hora_saida)),
+                                hora_saida=hora_saida,
+                                taxa=taxa,
+                                lucro=lucro,
+                                profit_percent=profit_percent,
+                            )
+                            self.db.add_fee(hora_saida, taxa)
+                            day = datetime.now().strftime("%Y-%m-%d")
+                            saldo_final = float(self.engine.get_runtime_snapshot(self.latest_price_brl).get("equity_brl", 0.0))
+                            self.db.upsert_daily_performance(day, lucro_delta=lucro, saldo_final=saldo_final, trade_delta=1)
+                            self._performance_logger.info(
+                                "TRADE_CLOSE | lucro=%.2f | lucro_pct=%.2f | saldo_final=%.2f",
+                                lucro,
+                                profit_percent,
+                                saldo_final,
+                            )
+                            self._open_trade_context = None
                         if reason == "SL":
                             self.log("Stop loss acionado")
                         elif reason == "TP":
@@ -342,6 +441,7 @@ class BotController:
                     "signal": str(last_signal_context.get("signal") or "none"),
                 },
             )
+            self._write_trading_log(last_signal_context, snap)
         else:
             equity = float(self.config.get("saldo_inicial", 0.0))
             drawdown = 0.0
@@ -417,4 +517,39 @@ class BotController:
             "lucro_liquido_brl": lucro_liquido,
             "strategy_mode_selected": strategy_mode_selected,
             "strategy_mode_active": strategy_mode_active,
+            "fees_paid_brl": self.db.get_total_fees(),
+            "position_indicator": self._position_indicator(position_open),
+            "sessions_count": self.db.sessions_count(),
+            "best_day": self.db.best_day(),
+            "worst_day": self.db.worst_day(),
+            "monthly_profit": self.db.monthly_profit(datetime.now().strftime("%Y-%m")),
+            "trades_count_db": self.db.trades_count(),
         }
+
+    def _position_indicator(self, position_open: bool) -> str:
+        if position_open:
+            return "BUY"
+        if isinstance(self.last_event, dict) and str(self.last_event.get("side", "")).upper() == "SELL":
+            return "SELL"
+        return "NONE"
+
+    def _write_trading_log(self, signal_ctx: dict[str, Any], snap: dict[str, Any]) -> None:
+        signal = str(signal_ctx.get("signal") or "none").upper()
+        price = float(signal_ctx.get("price") or self.latest_price_brl)
+        ema9 = float(signal_ctx.get("ema9") or 0.0)
+        ema21 = float(signal_ctx.get("ema21") or 0.0)
+        pos_size = float(snap.get("current_exposure_brl", 0.0))
+        lucro = float(snap.get("lucro_hoje_brl", 0.0))
+        key = f"{signal}|{round(ema9,2)}|{round(ema21,2)}|{round(pos_size,2)}"
+        if key == self._last_trading_log_key:
+            return
+        self._last_trading_log_key = key
+        self._trading_logger.info(
+            "BTC %.2f | EMA9 %.2f | EMA21 %.2f | SINAL %s | POS %.6f | LUCRO %.2f",
+            price,
+            ema9,
+            ema21,
+            signal,
+            pos_size / price if price > 0 else 0.0,
+            lucro,
+        )

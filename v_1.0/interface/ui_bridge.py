@@ -23,6 +23,8 @@ class UIBridge:
         mode = str(snapshot.get("mode", "simulacao")).upper()
         strategy_mode_selected = str(snapshot.get("strategy_mode_selected", "auto")).upper()
         strategy_mode_active = str(snapshot.get("strategy_mode_active", "lateral")).upper()
+        fees_paid = float(snapshot.get("fees_paid_brl", 0.0))
+        position_indicator = str(snapshot.get("position_indicator", "NONE"))
 
         arrow = "↑" if variation > 0 else "↓" if variation < 0 else ""
         sign = "+" if variation > 0 else ""
@@ -40,6 +42,15 @@ class UIBridge:
             color = "#ef4444"
 
         self.app.preco_label.configure(text=header, text_color=color)
+        if hasattr(self.app, "header_btc_value"):
+            signal = "+" if variation > 0 else ""
+            arrow = "↑" if variation > 0 else "↓" if variation < 0 else ""
+            self.app.header_btc_value.configure(text=f"${price:,.2f} {signal}{variation:.2f}% {arrow}", text_color=color)
+            self.app.header_saldo.configure(text=f"SALDO\nR$ {equity:,.2f}")
+            self.app.header_drawdown.configure(text=f"DRAWDOWN\n{drawdown:.2f}%")
+            self.app.header_strategy.configure(text=f"ESTRATEGIA\n{strategy_mode_selected}/{strategy_mode_active}")
+            self.app.header_fees.configure(text=f"TAXAS\nR$ {fees_paid:,.2f}")
+            self.app.header_position.configure(text=f"POSICAO\n● {position_indicator}")
 
         lucro_color = "#22c55e" if lucro_hoje > 0 else "#ef4444" if lucro_hoje < 0 else "#e5e7eb"
         self.app.card_lucro_value.configure(text=f"R$ {lucro_hoje:,.2f}", text_color=lucro_color)
