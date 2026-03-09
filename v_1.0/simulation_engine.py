@@ -69,6 +69,7 @@ class SimulationEngine:
         self._ensure_log_header()
 
     def rodar(self) -> dict[str, Any]:
+        print ("simulação inciada")
         try:
             candles = self._baixar_dados_binance()
             if candles.empty:
@@ -83,7 +84,7 @@ class SimulationEngine:
         # A cada iteração, o candle idx é tratado como em formação.
         # Sinais usam somente candles fechados idx-2 e idx-1.
         for idx in range(2, len(candles)):
-            print("Loop ativo")
+            print(f"Processando candle {self.current_index}")
             now = candles.iloc[idx]["open_time"]
             c3 = candles.iloc[idx - 2]  # -3
             c2 = candles.iloc[idx - 1]  # -2 (último fechado)

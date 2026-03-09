@@ -84,7 +84,8 @@ class BTCPriceFeed:
             self._last_price = float(price)
             self._last_volume = float(volume)
             self._last_tick_ts = time.time()
-        print(f"Novo preço BTC: {price}")
+        if int(time.time()) % 5 == 0:
+         print(f"BTC {price}")
         self._log(f"Novo tick BTC | preço={price:.2f} volume={volume:.6f}")
         if self.callback_on_tick:
             self.callback_on_tick(float(price), float(volume))

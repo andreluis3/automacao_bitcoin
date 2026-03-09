@@ -8,8 +8,9 @@ from math import sqrt
 from statistics import mean, pstdev
 from typing import Any
 
-from core.risk_manager import calculate_position_size, scale_position
+from core.risk_manager import scale_position
 from core.strategy_engine import StrategyConfig, StrategyEngine
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -32,8 +33,8 @@ class EngineConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     overtrading: OvertradingConfig = field(default_factory=OvertradingConfig)
     drawdown_pause_pct: float = 12.0
-    take_profit_pct: float = 0.8
-    stop_loss_pct: float = 0.4
+    take_profit_pct: float = 3.0
+    stop_loss_pct: float = 1.5
 
 
 @dataclass
@@ -59,6 +60,16 @@ class Position:
     entry_spent_brl: float
     entry_fee_brl: float
     opened_at: datetime
+    
+    def __init__(self, side, entry_price, quantity, stop_loss, take_profit):
+        self.side = side
+        self.entry_price = entry_price
+        self.quantity = quantity
+        self.stop_loss = stop_loss
+        self.take_profit = take_profit
+
+        # usado pelo trailing stop
+        self.highest_price = entry_price
 
 
 class RiskManager:
@@ -67,6 +78,10 @@ class RiskManager:
         self.scale_step_pct = 0.10
         self.max_position_size = 0.30
         self.position_alloc_pct = self.initial_alloc_pct
+        self.trailing_activation_pct = 1.0
+        self.trailing_distance_pct = 0.7
+        
+        
 
     def build_position_plan(
         self,
@@ -200,6 +215,9 @@ class SimulationExecutionAdapter(BaseExecutionAdapter):
         self.total_fee_paid_brl += fee_brl
 
         return net_brl, fee_brl
+    
+        def get_equity(self, price: float) -> float:
+            return self.total_balance_brl(price)
 
 
 class BinanceExecutionAdapter(BaseExecutionAdapter):
@@ -403,7 +421,7 @@ class TradingEngine:
                 max_exposure_pct=30.0,
                 min_order_value_brl=35.0,
             )
-            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=240, max_trades_per_hour=6)
+            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=30, max_trades_per_hour=60)
             self.config.drawdown_pause_pct = 8.0
         elif key == "agressivo":
             self.config.risk = RiskConfig(
@@ -473,6 +491,7 @@ class TradingEngine:
         now: datetime | None = None,
         candle_data: dict[str, float] | None = None,
     ) -> dict[str, Any]:
+        print("ENGINE RECEBEU PREÇO")
         price = float(price_brl)
         if price <= 0:
             return {"trade": False, "reason": "preco_invalido"}
@@ -507,8 +526,10 @@ class TradingEngine:
             if ema9_prev <= ema21_prev and ema9_now > ema21_now:
                 self.total_cross += 1
 
-        if self.position:
-            should_exit, exit_reason = self.risk_manager.evaluate_exit(self.position, price)
+            if self.position:
+                # atualiza trailing stop
+                self._update_trailing_stop(price)
+                should_exit, exit_reason = self.risk_manager.evaluate_exit(self.position, price)
             if should_exit:
                 return self._close_position(price, exit_reason, now, technical_reason="saida_por_risco")
 
@@ -526,7 +547,7 @@ class TradingEngine:
                 )
                 add_pct = max(0.0, new_alloc_pct - self.position_alloc_pct)
                 if add_pct > 0:
-                    capital_total = self.execution.get_equity()
+                    capital_total = self.execution.total_balance_brl(price)
                     add_value = capital_total * add_pct
                     scaled = self._scale_in_position(price, add_value, now, signal_ctx)
                     if scaled.get("trade"):
@@ -550,7 +571,7 @@ class TradingEngine:
         capital_total = self.execution.get_equity()
 
         # posição inicial = 10%
-        self.position_alloc_pct = self.initial_alloc_pct
+        self.position_alloc_pct = self.risk_manager.initial_alloc_pct
 
         alloc_pct = self.position_alloc_pct
 
@@ -577,6 +598,25 @@ class TradingEngine:
             motivo_entrada=str(signal_ctx.get("reason") or "entry"),
             strategy_context=signal_ctx,
         )
+
+    def _update_trailing_stop(self, price):
+
+        if not self.position:
+            return
+
+        pos = self.position
+
+        if price > pos.highest_price:
+            pos.highest_price = price
+
+        profit_pct = (price - pos.entry_price) / pos.entry_price * 100
+
+        if profit_pct >= self.trailing_activation_pct:
+
+            new_stop = pos.highest_price * (1 - self.trailing_distance_pct / 100)
+
+            if new_stop > pos.stop_loss:
+                pos.stop_loss = new_stop
 
     def force_buy(self, price_brl: float, motivo: str = "manual") -> float:
         if self.position:
@@ -860,6 +900,24 @@ class TradingEngine:
 
         minimo = max(60, self.config.overtrading.min_seconds_between_trades)
         return (now - self.last_trade_at) >= timedelta(seconds=minimo)
+    
+    def _update_trailing_stop(self, price):
+        if not self.position:
+            return
+
+        pos = self.position
+
+        if price > pos.highest_price:
+            pos.highest_price = price
+
+        profit_pct = (price - pos.entry_price) / pos.entry_price * 100
+
+        if profit_pct >= self.trailing_activation_pct:
+
+            new_stop = pos.highest_price * (1 - self.trailing_distance_pct / 100)
+
+            if new_stop > pos.stop_loss:
+                pos.stop_loss = new_stop
 
     def _prune_trade_window(self, now: datetime) -> None:
         limit = now - timedelta(hours=1)
@@ -1007,3 +1065,5 @@ class TradingEngine:
             "trades_prejuizo": len(self.loss_values),
             "lucro_total_brl": self.lucro_hoje_brl,
         }
+
+        print("Candles disponíveis:", len(self.candles))

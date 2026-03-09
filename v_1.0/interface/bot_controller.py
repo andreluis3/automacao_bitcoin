@@ -155,6 +155,7 @@ class BotController:
         self.log("Configuração salva.")
 
     def start_bot(self) -> tuple[bool, str]:
+        print("START_BOT EXECUTANDO")
         if self.bot_state != "parado":
             return False, "Bot já está em execução."
 
@@ -177,6 +178,8 @@ class BotController:
                 stop_loss_pct=0.4,
             )
             self.engine = TradingEngine(mode=modo, execution=execution, config=engine_cfg)
+            print("ENGINE CRIADO")
+
 
             profile = str(self.config.get("perfil", "Conservador"))
             self.engine.set_risk_profile(profile)
@@ -205,11 +208,13 @@ class BotController:
             self._open_trade_context = None
             self._last_trading_log_key = ""
             self.bot_state = state
+            print ("BOT ESTADO:", self.bot_state)
             self._pending_on_price = None
             self.feed.simulation_fallback = (modo != "real")
             self.feed.start()
+            print("FEED INICIADO")
             self.log(f"Bot iniciado em modo {self.bot_state.upper()}.")
-            return True, "Bot iniciado"
+            return True, "Bot iniciado" 
         except Exception as exc:
             self.engine = None
             self.bot_state = "parado"
@@ -217,6 +222,7 @@ class BotController:
             return False, str(exc)
 
     def start(self) -> tuple[bool, str]:
+        print("BOTCONTROLLER START CHAMADO")
         return self.start_bot()
 
     def stop_bot(self) -> tuple[bool, str]:
@@ -255,6 +261,8 @@ class BotController:
         return True, str(path)
 
     def _on_tick(self, price: float, volume: float) -> None:
+        print ("Tick recebido no controller:", price, volume)
+
         with self._tick_lock:
             self._latest_tick_price_brl = float(price)
             self._latest_tick_volume = float(volume)
@@ -262,7 +270,9 @@ class BotController:
         if self.bot_state not in {"simulando", "real"} or self.engine is None:
             return
 
+
         if self._pending_on_price is None or self._pending_on_price.done():
+            print ("enviando tick para engine.on_price:", price, volume)
             self._pending_on_price = self._executor.submit(
                 self.engine.on_price,
                 float(price),

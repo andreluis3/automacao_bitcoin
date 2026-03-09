@@ -481,6 +481,9 @@ class TradingApp(ctk.CTk):
         self.after(1000, self.loop_principal)
 
     def _on_start_clicked(self) -> None:
+        print("BOTAO START CLICADO")
+        result = self.controller.start()
+        print("RESULTADO START:", result)
         ok, msg = self.controller.start_bot()
         self.bridge.log_message(msg)
         self._atualizar_botoes_por_estado()

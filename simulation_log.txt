@@ -1,0 +1,11 @@
+data_hora | tipo | preco | quantidade | fee | pnl_liquido | motivo | saldo_apos
+2026-03-03T16:15:00 | BUY | 68487.71 | 0.02189298 | 0.60 | +0.00 | cross_up_ema7_sma40 | 8500.00
+2026-03-03T16:45:00 | SELL | 67712.74 | 0.02189298 | 0.59 | -18.76 | low_abaixo_ema7 | 9981.84
+2026-03-04T01:45:00 | INFO | CROSS FILTRADO | sma40_sobe=True | low2=68212.00 ema2=68325.10
+2026-03-04T06:45:00 | INFO | CROSS FILTRADO | sma40_sobe=True | low2=68126.74 ema2=68214.34
+2026-03-05T10:30:00 | INFO | CROSS FILTRADO | sma40_sobe=True | low2=72666.04 ema2=72688.30
+2026-03-06T02:30:00 | INFO | CROSS FILTRADO | sma40_sobe=True | low2=71036.00 ema2=71143.51
+2026-03-07T01:45:00 | INFO | CROSS FILTRADO | sma40_sobe=False | low2=68185.99 ema2=68253.25
+2026-03-07T03:00:00 | INFO | CROSS FILTRADO | sma40_sobe=False | low2=68166.01 ema2=68239.99
+2026-03-07T11:30:00 | INFO | CROSS FILTRADO | sma40_sobe=False | low2=68099.09 ema2=68041.60
+2026-03-07T15:30:00 | INFO | CROSS FILTRADO | sma40_sobe=False | low2=67856.71 ema2=67943.27
