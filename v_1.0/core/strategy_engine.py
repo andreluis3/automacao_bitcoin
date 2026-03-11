@@ -29,6 +29,9 @@ class StrategyEngine:
         self.ema_slow: deque[float] = deque(maxlen=3000)
         self.atr_calc = AtrCalculator(period=self.config.atr_period)
 
+    def _required_periods(self) -> int:
+        return max(self.config.ema_slow_period, self.config.slope_lookback + 1)
+
     def update_tick(self, price: float, high: float | None = None, low: float | None = None, volume: float = 0.0) -> None:
         p = float(price)
         if p <= 0:
@@ -69,15 +72,25 @@ class StrategyEngine:
     def evaluate(self, has_position: bool, selected_mode: str = "auto") -> dict:
 
         # 1️⃣ checa se já tem dados suficientes
-        if len(self.ema_fast) < max(self.config.ema_slow_period, self.config.slope_lookback + 1):
+        required_periods = self._required_periods()
+        buffer_len = len(self.prices)
+        if buffer_len < required_periods:
             price = float(self.prices[-1]) if self.prices else 0.0
+            ema9 = float(self.ema_fast[-1]) if self.ema_fast else price
+            ema21 = float(self.ema_slow[-1]) if self.ema_slow else price
+            dist = abs(ema9 - ema21)
+            dist_pct = (dist / ema21) if ema21 > 0 else 0.0
 
             return {
                 "signal": "none",
                 "reason": "dados_insuficientes",
                 "price": price,
-                "ema9": self.ema_fast[-1] if self.ema_fast else price,
-                "ema21": self.ema_slow[-1] if self.ema_slow else price,
+                "ema9": ema9,
+                "ema21": ema21,
+                "distancia_percentual": dist_pct,
+                "buffer_len": buffer_len,
+                "required_periods": required_periods,
+                "warming_up": True,
             }
 
         # 2️⃣ cálculo normal da estratégia

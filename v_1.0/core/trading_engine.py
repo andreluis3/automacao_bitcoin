@@ -925,6 +925,16 @@ class TradingEngine:
             self.trade_entries_last_hour.popleft()
 
     def _append_near_trade_log(self, now: datetime, signal_ctx: dict[str, Any]) -> None:
+        reason = str(signal_ctx.get("reason") or "")
+        warming_up = bool(signal_ctx.get("warming_up"))
+        buffer_len = int(signal_ctx.get("buffer_len") or 0)
+        required_periods = int(signal_ctx.get("required_periods") or 0)
+        if warming_up:
+            if required_periods > 0:
+                reason = f"buffer={buffer_len}/{required_periods} warming_up"
+            else:
+                reason = "warming_up"
+
         self.near_trade_logs.append(
             {
                 "data": now.isoformat(timespec="seconds"),
@@ -933,9 +943,12 @@ class TradingEngine:
                 "ema21": float(signal_ctx.get("ema21") or 0.0),
                 "distancia_percentual": float(signal_ctx.get("distancia_percentual") or 0.0),
                 "slope": float(signal_ctx.get("slope_ema9") or 0.0),
-                "reason": str(signal_ctx.get("reason") or ""),
+                "reason": reason,
                 "active_mode": str(signal_ctx.get("active_mode") or self.active_strategy_mode),
                 "atr": float(signal_ctx.get("atr") or 0.0),
+                "buffer_len": buffer_len,
+                "required_periods": required_periods,
+                "warming_up": warming_up,
             }
         )
         if len(self.near_trade_logs) > 500:

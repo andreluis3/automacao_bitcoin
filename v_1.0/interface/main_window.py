@@ -420,7 +420,7 @@ class TradingApp(ctk.CTk):
                 f"{float(row.get('ema21', 0.0)):8.2f} | "
                 f"{float(row.get('distancia_percentual', 0.0)):9.5%} | "
                 f"{float(row.get('slope', 0.0)):8.4f} | "
-                f"{str(row.get('reason', ''))[:22]:22}"
+                f"{str(row.get('reason', ''))[:32]:32}"
             ),
         )
 
