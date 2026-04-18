@@ -14,7 +14,7 @@
   ],
   "max_position_size": 0.3,
   "perfil": "Agressivo",
-  "acumular_saldo": false,
+  "acumular_saldo": true,
   "saldo_inicial": 300.0,
   "valor_trade": 2.0,
   "stop": 1.2,
