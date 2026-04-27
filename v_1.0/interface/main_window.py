@@ -10,6 +10,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from interface.bot_controller import BotController
 from interface.janela_simulacao import JanelaSimulacao
 from interface.ui_bridge import UIBridge
+from core.risk_manager import *
 
 
 ctk.set_appearance_mode("dark")

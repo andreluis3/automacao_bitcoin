@@ -6,20 +6,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from math import sqrt
 from statistics import mean, pstdev
-from typing import Any
+from typing import Any, Optional
 
-from core.risk_manager import scale_position
+from core.risk_manager import *
 from core.strategy_engine import StrategyConfig, StrategyEngine
-from dataclasses import dataclass, field
-
-
-@dataclass
-class RiskConfig:
-    risk_per_trade_pct_base: float = 2.5
-    risk_per_trade_pct_aggressive: float = 4.0
-    risk_per_trade_pct_defensive: float = 1.25
-    max_exposure_pct: float = 40.0
-    min_order_value_brl: float = 35.0
 
 
 @dataclass
@@ -37,108 +27,9 @@ class EngineConfig:
     stop_loss_pct: float = 1.5
 
 
-@dataclass
-class PositionPlan:
-    quantity: float
-    entry_price: float
-    stop_loss: float
-    take_profit: float
-    risk_brl: float
-    risk_pct: float
-    notional_brl: float
-    risk_per_trade_pct: float
-
-
-@dataclass
-class Position:
-    entry_price: float
-    quantity: float
-    stop_loss: float
-    take_profit: float
-    highest_price: float
-    risk_brl: float
-    entry_spent_brl: float
-    entry_fee_brl: float
-    opened_at: datetime
-    
-    def __init__(self, side, entry_price, quantity, stop_loss, take_profit):
-        self.side = side
-        self.entry_price = entry_price
-        self.quantity = quantity
-        self.stop_loss = stop_loss
-        self.take_profit = take_profit
-
-        # usado pelo trailing stop
-        self.highest_price = entry_price
-
-
-class RiskManager:
-    def __init__(self, risk_config: RiskConfig):
-        self.initial_alloc_pct = 0.10
-        self.scale_step_pct = 0.10
-        self.max_position_size = 0.30
-        self.position_alloc_pct = self.initial_alloc_pct
-        self.trailing_activation_pct = 1.0
-        self.trailing_distance_pct = 0.7
-        
-        
-
-    def build_position_plan(
-        self,
-        equity_brl: float,
-        available_brl: float,
-        entry_price: float,
-        stop_price: float,
-        take_price: float,
-        max_buy_brl: float,
-        risk_per_trade_pct: float,
-    ) -> PositionPlan | None:
-        if equity_brl <= 0 or available_brl <= 0 or entry_price <= 0:
-            return None
-        if stop_price <= 0 or stop_price >= entry_price:
-            return None
-        if take_price <= entry_price:
-            return None
-
-        risk_per_unit = entry_price - stop_price
-        if risk_per_unit <= 0:
-            return None
-
-        risk_value = equity_brl * (risk_per_trade_pct / 100.0)
-        max_exposure_value = equity_brl * (self.config.max_exposure_pct / 100.0)
-        position_value_from_risk = (risk_value / risk_per_unit) * entry_price
-
-        cap = min(available_brl, max_buy_brl if max_buy_brl > 0 else available_brl, max_exposure_value)
-        position_value = min(position_value_from_risk, cap)
-
-        if position_value < self.config.min_order_value_brl:
-            return None
-
-        quantity = position_value / entry_price
-        risk_brl = quantity * risk_per_unit
-        if quantity <= 0 or position_value <= 0:
-            return None
-
-        risk_pct = ((entry_price - stop_price) / entry_price) * 100
-
-        return PositionPlan(
-            quantity=quantity,
-            entry_price=entry_price,
-            stop_loss=stop_price,
-            take_profit=take_price,
-            risk_brl=risk_brl,
-            risk_pct=risk_pct,
-            notional_brl=position_value,
-            risk_per_trade_pct=risk_per_trade_pct,
-        )
-
-    def evaluate_exit(self, position: Position, current_price: float) -> tuple[bool, str]:
-        if current_price <= position.stop_loss:
-            return True, "SL"
-        if current_price >= position.take_profit:
-            return True, "TP"
-        return False, ""
-
+# ─────────────────────────────────────────────
+# Adapters de Execução
+# ─────────────────────────────────────────────
 
 class BaseExecutionAdapter:
     def __init__(self, fee_rate: float = 0.001):
@@ -157,6 +48,10 @@ class BaseExecutionAdapter:
     def total_balance_brl(self, price_brl: float) -> float:
         raise NotImplementedError
 
+    def get_equity(self, price_brl: float) -> float:
+        """Alias conveniente para total_balance_brl."""
+        return self.total_balance_brl(price_brl)
+
     def buy_quote(self, quote_brl: float, price_brl: float) -> tuple[float, float]:
         raise NotImplementedError
 
@@ -167,8 +62,8 @@ class BaseExecutionAdapter:
 class SimulationExecutionAdapter(BaseExecutionAdapter):
     def __init__(self, fee_rate: float = 0.001):
         super().__init__(fee_rate=fee_rate)
-        self.balance_brl = 0.0
-        self.btc = 0.0
+        self.balance_brl: float = 0.0
+        self.btc: float = 0.0
 
     def set_initial_balance(self, balance_brl: float) -> None:
         self.balance_brl = float(balance_brl)
@@ -185,6 +80,10 @@ class SimulationExecutionAdapter(BaseExecutionAdapter):
         if price_brl <= 0:
             return self.balance_brl
         return self.balance_brl + (self.btc * price_brl)
+
+    # FIX: get_equity agora existe como método próprio (também herdado do base)
+    def get_equity(self, price_brl: float) -> float:
+        return self.total_balance_brl(price_brl)
 
     def buy_quote(self, quote_brl: float, price_brl: float) -> tuple[float, float]:
         amount = min(float(quote_brl), self.balance_brl)
@@ -215,13 +114,10 @@ class SimulationExecutionAdapter(BaseExecutionAdapter):
         self.total_fee_paid_brl += fee_brl
 
         return net_brl, fee_brl
-    
-        def get_equity(self, price: float) -> float:
-            return self.total_balance_brl(price)
 
 
 class BinanceExecutionAdapter(BaseExecutionAdapter):
-    def __init__(self, client, fee_rate: float = 0.001):
+    def __init__(self, client: Any, fee_rate: float = 0.001):
         super().__init__(fee_rate=fee_rate)
         self.client = client
 
@@ -243,6 +139,9 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
     def total_balance_brl(self, price_brl: float) -> float:
         return self.available_brl() + (self.btc_balance() * price_brl)
 
+    def get_equity(self, price_brl: float) -> float:
+        return self.total_balance_brl(price_brl)
+
     def buy_quote(self, quote_brl: float, price_brl: float) -> tuple[float, float]:
         amount = max(0.0, float(quote_brl))
         if amount <= 0 or price_brl <= 0:
@@ -254,7 +153,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             type="MARKET",
             quoteOrderQty=round(amount, 2),
         )
-        executed_qty = sum(float(fill.get("qty", 0.0)) for fill in order.get("fills", []))
+        executed_qty = sum(float(f.get("qty", 0.0)) for f in order.get("fills", []))
         if executed_qty <= 0:
             executed_qty = float(order.get("executedQty", 0.0))
 
@@ -279,13 +178,17 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         return max(0.0, quote_qty - fee_brl), fee_brl
 
 
+# ─────────────────────────────────────────────
+# TradingEngine
+# ─────────────────────────────────────────────
+
 class TradingEngine:
     def __init__(
         self,
         mode: str,
         execution: BaseExecutionAdapter,
-        trade_manager=None,
-        config: EngineConfig | None = None,
+        trade_manager: Any = None,
+        config: Optional[EngineConfig] = None,
     ):
         self.mode = mode
         self.execution = execution
@@ -299,32 +202,36 @@ class TradingEngine:
         self.selected_strategy_mode = "auto"
         self.active_strategy_mode = "lateral"
         self.breakout_risk_pct = 30.0
-        self.scaling_steps = [0.02, 0.02, 0.03]
+        self.scaling_steps: list[float] = [0.02, 0.02, 0.03]
         self.max_position_size = 0.30
         self.position_alloc_pct = 0.0
+
+        # Trailing stop config
+        self.trailing_activation_pct = 1.0
+        self.trailing_distance_pct = 0.7
 
         self.initial_balance_brl = 0.0
         self.max_buy_brl = 0.0
         self.max_sell_brl = 0.0
 
-        self.position: Position | None = None
+        self.position: Optional[Position] = None
         self.current_drawdown_pct = 0.0
         self.max_drawdown_pct = 0.0
         self.peak_equity_brl = 0.0
         self.paused_by_drawdown = False
-        self.pause_until: datetime | None = None
-        self.last_trade_at: datetime | None = None
+        self.pause_until: Optional[datetime] = None
+        self.last_trade_at: Optional[datetime] = None
         self.trade_entries_last_hour: deque[datetime] = deque()
         self._drawdown_alert_sent = False
 
-        self.equity_curve: list[dict[str, float | str]] = []
+        self.equity_curve: list[dict] = []
         self.recent_returns: deque[float] = deque(maxlen=80)
-        self.last_trade: dict[str, float | str] | None = None
+        self.last_trade: Optional[dict] = None
         self.equity_history: list[float] = []
         self.benchmark_history: list[float] = []
-        self.trade_history: list[dict[str, Any]] = []
-        self.near_trade_logs: list[dict[str, Any]] = []
-        self.last_signal_context: dict[str, Any] = {}
+        self.trade_history: list[dict] = []
+        self.near_trade_logs: list[dict] = []
+        self.last_signal_context: dict = {}
 
         self.accumulation_mode = False
         self.lucro_hoje_brl = 0.0
@@ -344,11 +251,13 @@ class TradingEngine:
         self.cross_filtrados = 0
         self.cross_executados = 0
 
+    # ─── Configuração ───────────────────────────────────────────────────
+
     def set_sizing_config(
         self,
         risk_per_trade_pct: float,
         breakout_risk_pct: float,
-        scaling_steps: list[float] | None = None,
+        scaling_steps: Optional[list[float]] = None,
         max_position_size: float = 0.30,
     ) -> None:
         rp = max(0.1, min(3.0, float(risk_per_trade_pct)))
@@ -358,13 +267,20 @@ class TradingEngine:
             self.scaling_steps = [max(0.0, float(v)) for v in scaling_steps]
         self.max_position_size = max(0.05, min(1.0, float(max_position_size)))
 
-    def configure(self, initial_balance_brl: float, max_buy_brl: float, max_sell_brl: float) -> None:
+    def configure(
+        self,
+        initial_balance_brl: float,
+        max_buy_brl: float,
+        max_sell_brl: float,
+    ) -> None:
         self.initial_balance_brl = float(initial_balance_brl)
         self.max_buy_brl = float(max_buy_brl)
         self.max_sell_brl = float(max_sell_brl)
 
         self.execution.set_initial_balance(self.initial_balance_brl)
+        self._reset_state()
 
+    def _reset_state(self) -> None:
         self.position = None
         self.current_drawdown_pct = 0.0
         self.max_drawdown_pct = 0.0
@@ -381,7 +297,6 @@ class TradingEngine:
         self.trade_history.clear()
         self.near_trade_logs.clear()
         self.last_signal_context = {}
-
         self._drawdown_alert_sent = False
         self.lucro_hoje_brl = 0.0
         self.safe_reserve_brl = 0.0
@@ -421,7 +336,9 @@ class TradingEngine:
                 max_exposure_pct=30.0,
                 min_order_value_brl=35.0,
             )
-            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=30, max_trades_per_hour=60)
+            self.config.overtrading = OvertradingConfig(
+                min_seconds_between_trades=30, max_trades_per_hour=60
+            )
             self.config.drawdown_pause_pct = 8.0
         elif key == "agressivo":
             self.config.risk = RiskConfig(
@@ -431,7 +348,9 @@ class TradingEngine:
                 max_exposure_pct=40.0,
                 min_order_value_brl=35.0,
             )
-            self.config.overtrading = OvertradingConfig(min_seconds_between_trades=120, max_trades_per_hour=12)
+            self.config.overtrading = OvertradingConfig(
+                min_seconds_between_trades=120, max_trades_per_hour=12
+            )
             self.config.drawdown_pause_pct = 15.0
         else:
             self.config.risk = RiskConfig()
@@ -440,6 +359,8 @@ class TradingEngine:
 
         self.risk_manager = RiskManager(self.config.risk)
         self.current_risk_per_trade_pct = self.config.risk.risk_per_trade_pct_base
+
+    # ─── Helpers internos ───────────────────────────────────────────────
 
     def _current_equity_total(self, price_brl: float) -> float:
         return self.execution.total_balance_brl(price_brl)
@@ -455,7 +376,7 @@ class TradingEngine:
             return float("inf") if self.total_gains_brl > 0 else 0.0
         return self.total_gains_brl / self.total_losses_brl
 
-    def _update_risk_regime(self, signal_ctx: dict[str, Any] | None = None) -> None:
+    def _update_risk_regime(self, signal_ctx: Optional[dict] = None) -> None:
         risk = self.config.risk.risk_per_trade_pct_base
         if self.consecutive_losses >= 3:
             risk = self.config.risk.risk_per_trade_pct_defensive
@@ -485,13 +406,14 @@ class TradingEngine:
             if self.consecutive_losses >= 5:
                 self.pause_until = now + timedelta(minutes=30)
 
+    # ─── Loop principal ──────────────────────────────────────────────────
+
     def on_price(
         self,
         price_brl: float,
-        now: datetime | None = None,
-        candle_data: dict[str, float] | None = None,
+        now: Optional[datetime] = None,
+        candle_data: Optional[dict] = None,
     ) -> dict[str, Any]:
-        print("ENGINE RECEBEU PREÇO")
         price = float(price_brl)
         if price <= 0:
             return {"trade": False, "reason": "preco_invalido"}
@@ -505,38 +427,69 @@ class TradingEngine:
         equity_before = self._current_equity_total(price)
         self._update_equity_stats(price, now)
 
-        if self.pause_until is not None and now < self.pause_until:
-            return {"trade": False, "reason": "pausa_5_perdas", "resume_at": self.pause_until.isoformat(timespec="seconds")}
-        if self.pause_until is not None and now >= self.pause_until:
+        # Pausas
+        if self.pause_until is not None:
+            if now < self.pause_until:
+                return {
+                    "trade": False,
+                    "reason": "pausa_5_perdas",
+                    "resume_at": self.pause_until.isoformat(timespec="seconds"),
+                }
             self.pause_until = None
 
         if self.paused_by_drawdown:
-            return {"trade": False, "reason": "pausado_drawdown", "drawdown": self.current_drawdown_pct}
+            return {
+                "trade": False,
+                "reason": "pausado_drawdown",
+                "drawdown": self.current_drawdown_pct,
+            }
 
-        signal_ctx = self.strategy.evaluate(has_position=self.position is not None, selected_mode=self.selected_strategy_mode)
+        signal_ctx = self.strategy.evaluate(
+            has_position=self.position is not None,
+            selected_mode=self.selected_strategy_mode,
+        )
         self.last_signal_context = dict(signal_ctx)
-        self.active_strategy_mode = str(signal_ctx.get("active_mode") or self.active_strategy_mode)
+        self.active_strategy_mode = str(
+            signal_ctx.get("active_mode") or self.active_strategy_mode
+        )
 
-        # contabiliza apenas cruzamentos de tendência
-        if bool(signal_ctx.get("ema9_prev") is not None and signal_ctx.get("ema21_prev") is not None):
-            ema9_prev = float(signal_ctx.get("ema9_prev") or 0.0)
-            ema21_prev = float(signal_ctx.get("ema21_prev") or 0.0)
-            ema9_now = float(signal_ctx.get("ema9") or 0.0)
-            ema21_now = float(signal_ctx.get("ema21") or 0.0)
+        # Contabiliza cruzamentos
+        ema9_prev = float(signal_ctx.get("ema9_prev") or 0.0)
+        ema21_prev = float(signal_ctx.get("ema21_prev") or 0.0)
+        ema9_now = float(signal_ctx.get("ema9") or 0.0)
+        ema21_now = float(signal_ctx.get("ema21") or 0.0)
+        if ema9_prev > 0 and ema21_prev > 0:
             if ema9_prev <= ema21_prev and ema9_now > ema21_now:
                 self.total_cross += 1
 
-            if self.position:
-                # atualiza trailing stop
-                self._update_trailing_stop(price)
-                should_exit, exit_reason = self.risk_manager.evaluate_exit(self.position, price)
+        # ── Gestão de posição aberta ──────────────────────────────────
+        if self.position:
+            # Atualiza trailing stop
+            self.risk_manager.update_trailing_stop(
+                position=self.position,
+                current_price=price,
+                activation_pct=self.trailing_activation_pct,
+                distance_pct=self.trailing_distance_pct,
+            )
+
+            # FIX: should_exit agora está DENTRO do bloco if self.position
+            should_exit, exit_reason = self.risk_manager.evaluate_exit(
+                self.position, price
+            )
             if should_exit:
-                return self._close_position(price, exit_reason, now, technical_reason="saida_por_risco")
+                return self._close_position(
+                    price, exit_reason, now, technical_reason="saida_por_risco"
+                )
 
             if signal_ctx.get("signal") == "sell":
-                return self._close_position(price, "SIGNAL_EXIT", now, technical_reason=str(signal_ctx.get("reason") or "sinal"))
+                return self._close_position(
+                    price,
+                    "SIGNAL_EXIT",
+                    now,
+                    technical_reason=str(signal_ctx.get("reason") or "sinal"),
+                )
 
-            # Position scaling: adiciona posição gradualmente enquanto tendência segue válida
+            # Escalonamento de posição
             if self._can_scale_position(signal_ctx):
                 strength = self._signal_strength(signal_ctx)
                 new_alloc_pct = scale_position(
@@ -547,47 +500,58 @@ class TradingEngine:
                 )
                 add_pct = max(0.0, new_alloc_pct - self.position_alloc_pct)
                 if add_pct > 0:
-                    capital_total = self.execution.total_balance_brl(price)
+                    capital_total = self.execution.get_equity(price)
                     add_value = capital_total * add_pct
                     scaled = self._scale_in_position(price, add_value, now, signal_ctx)
                     if scaled.get("trade"):
                         self.position_alloc_pct = new_alloc_pct
                         return scaled
 
-            return {"trade": False, "reason": "posicao_aberta", "drawdown": self.current_drawdown_pct}
+            return {
+                "trade": False,
+                "reason": "posicao_aberta",
+                "drawdown": self.current_drawdown_pct,
+            }
 
+        # ── Sem posição: avalia entrada ───────────────────────────────
         if signal_ctx.get("signal") != "buy":
             self.cross_filtrados += 1
             self._append_near_trade_log(now, signal_ctx)
-            return {"trade": False, "reason": str(signal_ctx.get("reason") or "sem_sinal"), "drawdown": self.current_drawdown_pct}
+            return {
+                "trade": False,
+                "reason": str(signal_ctx.get("reason") or "sem_sinal"),
+                "drawdown": self.current_drawdown_pct,
+            }
 
         self._update_risk_regime(signal_ctx)
 
         if not self._can_open_trade(now):
             self._append_near_trade_log(now, {**signal_ctx, "reason": "filtro_overtrading"})
-            return {"trade": False, "reason": "filtro_overtrading", "drawdown": self.current_drawdown_pct}
+            return {
+                "trade": False,
+                "reason": "filtro_overtrading",
+                "drawdown": self.current_drawdown_pct,
+            }
 
-        # capital total da conta
-        capital_total = self.execution.get_equity()
+        # FIX: usa get_equity corretamente passando o price
+        capital_total = self.execution.get_equity(price)
 
-        # posição inicial = 10%
         self.position_alloc_pct = self.risk_manager.initial_alloc_pct
+        trade_value = capital_total * self.position_alloc_pct
 
-        alloc_pct = self.position_alloc_pct
-
-        # valor em reais da posição
-        trade_value = capital_total * alloc_pct
-
-        # cria plano de posição
         plan = self._build_plan_from_value(
             price=price,
             trade_value=trade_value,
-            risk_per_trade_pct=self.config.stop_loss_pct,
+            risk_per_trade_pct=self.current_risk_per_trade_pct,
         )
 
         if not plan:
             self._append_near_trade_log(now, {**signal_ctx, "reason": "sem_position_size"})
-            return {"trade": False, "reason": "sem_position_size", "drawdown": self.current_drawdown_pct}
+            return {
+                "trade": False,
+                "reason": "sem_position_size",
+                "drawdown": self.current_drawdown_pct,
+            }
 
         self.cross_executados += 1
 
@@ -599,65 +563,14 @@ class TradingEngine:
             strategy_context=signal_ctx,
         )
 
-    def _update_trailing_stop(self, price):
+    # ─── Operações de posição ────────────────────────────────────────────
 
-        if not self.position:
-            return
-
-        pos = self.position
-
-        if price > pos.highest_price:
-            pos.highest_price = price
-
-        profit_pct = (price - pos.entry_price) / pos.entry_price * 100
-
-        if profit_pct >= self.trailing_activation_pct:
-
-            new_stop = pos.highest_price * (1 - self.trailing_distance_pct / 100)
-
-            if new_stop > pos.stop_loss:
-                pos.stop_loss = new_stop
-
-    def force_buy(self, price_brl: float, motivo: str = "manual") -> float:
-        if self.position:
-            return 0.0
-
-        price = float(price_brl)
-        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
-        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
-        equity = self._equity_for_risk(price)
-
-        signal_ctx = self.strategy.evaluate(has_position=False, selected_mode=self.selected_strategy_mode)
-        self._update_risk_regime(signal_ctx)
-
-        plan = self.risk_manager.build_position_plan(
-            equity_brl=equity,
-            available_brl=self.execution.available_brl(),
-            entry_price=price,
-            stop_price=stop_price,
-            take_price=take_price,
-            max_buy_brl=self.max_buy_brl,
-            risk_per_trade_pct=self.current_risk_per_trade_pct,
-        )
-        if not plan:
-            return 0.0
-
-        opened = self._open_position(
-            plan,
-            datetime.utcnow(),
-            motivo_entrada=motivo,
-            saldo_antes=self.execution.total_balance_brl(price),
-            strategy_context=signal_ctx,
-        )
-        return float(opened.get("btc", 0.0)) if opened.get("trade") else 0.0
-
-    def force_sell(self, price_brl: float, motivo: str = "manual") -> float:
-        if not self.position:
-            return 0.0
-        closed = self._close_position(float(price_brl), motivo, datetime.utcnow(), technical_reason=motivo)
-        return float(closed.get("amount_brl", 0.0)) if closed.get("trade") else 0.0
-
-    def _build_plan_from_value(self, price: float, trade_value: float, risk_per_trade_pct: float) -> PositionPlan | None:
+    def _build_plan_from_value(
+        self,
+        price: float,
+        trade_value: float,
+        risk_per_trade_pct: float,
+    ) -> Optional[PositionPlan]:
         if price <= 0 or trade_value <= 0:
             return None
         stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
@@ -676,98 +589,26 @@ class TradingEngine:
             risk_per_trade_pct=risk_per_trade_pct,
         )
 
-    def _signal_strength(self, signal_ctx: dict[str, Any]) -> float:
-        dist = float(signal_ctx.get("distancia_percentual") or 0.0)
-        slope = abs(float(signal_ctx.get("slope_ema9") or 0.0))
-        atr = float(signal_ctx.get("atr") or 0.0)
-        price = float(signal_ctx.get("price") or 1.0)
-        score = min(1.0, (dist * 20.0) + (slope / max(price, 1.0) * 200.0) + (atr / max(price, 1.0) * 10.0))
-        return max(0.0, score)
-
-    def _is_breakout_context(self, signal_ctx: dict[str, Any]) -> bool:
-        ema9 = float(signal_ctx.get("ema9") or 0.0)
-        ema21 = float(signal_ctx.get("ema21") or 0.0)
-        slope = float(signal_ctx.get("slope_ema9") or 0.0)
-        price = float(signal_ctx.get("price") or 1.0)
-        dist_pct = abs(ema9 - ema21) / max(ema21, 1.0)
-        return bool(
-            signal_ctx.get("active_mode") == "tendencia"
-            and ema9 > ema21
-            and slope > (price * 0.0005)
-            and dist_pct > 0.002
-        )
-
-    def _can_scale_position(self, signal_ctx: dict[str, Any]) -> bool:
-        if self.position is None:
-            return False
-        if self.position_alloc_pct >= self.max_position_size:
-            return False
-        if self.last_trade_at is not None:
-            delta = datetime.utcnow() - self.last_trade_at
-            if delta < timedelta(seconds=max(60, self.config.overtrading.min_seconds_between_trades)):
-                return False
-        self._prune_trade_window(datetime.utcnow())
-        if len(self.trade_entries_last_hour) >= self.config.overtrading.max_trades_per_hour:
-            return False
-        return (
-            str(signal_ctx.get("active_mode") or "") == "tendencia"
-            and float(signal_ctx.get("ema9") or 0.0) > float(signal_ctx.get("ema21") or 0.0)
-            and float(signal_ctx.get("slope_ema9") or 0.0) > 0
-        )
-
-    def _scale_in_position(self, price: float, add_value: float, now: datetime, signal_ctx: dict[str, Any]) -> dict[str, Any]:
-        if self.position is None or add_value <= 0:
-            return {"trade": False, "reason": "scale_in_invalido"}
-        btc, fee_brl = self.execution.buy_quote(add_value, price)
-        if btc <= 0:
-            return {"trade": False, "reason": "scale_in_sem_execucao"}
-
-        pos = self.position
-        old_qty = pos.quantity
-        new_qty = old_qty + btc
-        avg_entry = ((pos.entry_price * old_qty) + (price * btc)) / max(new_qty, 1e-9)
-        pos.entry_price = avg_entry
-        pos.quantity = new_qty
-        pos.entry_spent_brl += add_value
-        pos.entry_fee_brl += fee_brl
-        pos.stop_loss = avg_entry * (1.0 - (self.config.stop_loss_pct / 100.0))
-        pos.take_profit = avg_entry * (1.0 + (self.config.take_profit_pct / 100.0))
-        self.current_exposure_brl += add_value
-        self.last_trade_at = now
-        self.trade_entries_last_hour.append(now)
-        self._prune_trade_window(now)
-        self.last_trade = {
-            "side": "BUY",
-            "price": price,
-            "btc": btc,
-            "fee_brl": fee_brl,
-            "timestamp": now.isoformat(timespec="seconds"),
-            "reason": "scale_in",
-            "active_mode": str(signal_ctx.get("active_mode") or self.active_strategy_mode),
-        }
-        return {"trade": True, "side": "BUY", "btc": btc, "entry": price, "reason": "scale_in"}
-
     def _open_position(
         self,
         plan: PositionPlan,
         now: datetime,
         motivo_entrada: str = "strategy",
-        saldo_antes: float | None = None,
-        strategy_context: dict | None = None,
+        saldo_antes: Optional[float] = None,
+        strategy_context: Optional[dict] = None,
     ) -> dict[str, Any]:
-        quote_brl = plan.notional_brl
-        btc, fee_brl = self.execution.buy_quote(quote_brl, plan.entry_price)
+        btc, fee_brl = self.execution.buy_quote(plan.notional_brl, plan.entry_price)
         if btc <= 0:
             return {"trade": False, "reason": "falha_execucao_compra"}
 
         self.position = Position(
+            side="BUY",
             entry_price=plan.entry_price,
             quantity=btc,
             stop_loss=plan.stop_loss,
             take_profit=plan.take_profit,
-            highest_price=plan.entry_price,
             risk_brl=plan.risk_brl,
-            entry_spent_brl=quote_brl,
+            entry_spent_brl=plan.notional_brl,
             entry_fee_brl=fee_brl,
             opened_at=now,
         )
@@ -775,20 +616,27 @@ class TradingEngine:
         self.last_trade_at = now
         self.trade_entries_last_hour.append(now)
         self._prune_trade_window(now)
-        self.current_exposure_brl = quote_brl
+        self.current_exposure_brl = plan.notional_brl
 
         if self.trade_manager:
-            self.trade_manager.abrir_trade(
-                modo=self.mode,
-                preco_entrada=plan.entry_price,
-                saldo_antes=float(saldo_antes if saldo_antes is not None else self.execution.total_balance_brl(plan.entry_price)),
-                quantidade=btc,
-                risco_percentual=plan.risk_pct,
-                stop_loss=plan.stop_loss,
-                take_profit=plan.take_profit,
-                motivo_entrada=motivo_entrada,
-                taxa_paga=fee_brl,
-            )
+            try:
+                self.trade_manager.abrir_trade(
+                    modo=self.mode,
+                    preco_entrada=plan.entry_price,
+                    saldo_antes=float(
+                        saldo_antes
+                        if saldo_antes is not None
+                        else self.execution.total_balance_brl(plan.entry_price)
+                    ),
+                    quantidade=btc,
+                    risco_percentual=plan.risk_pct,
+                    stop_loss=plan.stop_loss,
+                    take_profit=plan.take_profit,
+                    motivo_entrada=motivo_entrada,
+                    taxa_paga=fee_brl,
+                )
+            except Exception as exc:
+                self.logger.warning("trade_manager.abrir_trade falhou: %s", exc)
 
         self.last_trade = {
             "side": "BUY",
@@ -798,7 +646,9 @@ class TradingEngine:
             "timestamp": now.isoformat(timespec="seconds"),
             "reason": motivo_entrada,
             "risk_per_trade_pct": plan.risk_per_trade_pct,
-            "active_mode": str((strategy_context or {}).get("active_mode") or self.active_strategy_mode),
+            "active_mode": str(
+                (strategy_context or {}).get("active_mode") or self.active_strategy_mode
+            ),
         }
 
         return {
@@ -825,26 +675,30 @@ class TradingEngine:
         amount_brl, fee_brl = self.execution.sell_quantity(pos.quantity, price_brl)
         if amount_brl <= 0:
             return {"trade": False, "reason": "falha_execucao_venda"}
-        self.position_alloc_pct = self.initial_alloc_pct
-
 
         pnl_brl = amount_brl - pos.entry_spent_brl
-        pnl_pct = (pnl_brl / pos.entry_spent_brl) * 100 if pos.entry_spent_brl > 0 else 0.0
+        pnl_pct = (
+            (pnl_brl / pos.entry_spent_brl) * 100 if pos.entry_spent_brl > 0 else 0.0
+        )
         self.lucro_hoje_brl += pnl_brl
         self._register_trade_result(pnl_brl, now)
 
         saldo_depois = self.execution.total_balance_brl(price_brl)
+
         if self.trade_manager:
-            self.trade_manager.fechar_trade(
-                modo=self.mode,
-                preco_saida=price_brl,
-                saldo_depois=saldo_depois,
-                quantidade=pos.quantity,
-                lucro_brl=pnl_brl,
-                lucro_percentual=pnl_pct,
-                motivo_saida=motivo_saida,
-                taxa_paga=fee_brl,
-            )
+            try:
+                self.trade_manager.fechar_trade(
+                    modo=self.mode,
+                    preco_saida=price_brl,
+                    saldo_depois=saldo_depois,
+                    quantidade=pos.quantity,
+                    lucro_brl=pnl_brl,
+                    lucro_percentual=pnl_pct,
+                    motivo_saida=motivo_saida,
+                    taxa_paga=fee_brl,
+                )
+            except Exception as exc:
+                self.logger.warning("trade_manager.fechar_trade falhou: %s", exc)
 
         self.last_trade = {
             "side": "SELL",
@@ -887,53 +741,150 @@ class TradingEngine:
             "lucro_hoje_brl": self.lucro_hoje_brl,
         }
 
+    def _scale_in_position(
+        self,
+        price: float,
+        add_value: float,
+        now: datetime,
+        signal_ctx: dict,
+    ) -> dict[str, Any]:
+        if self.position is None or add_value <= 0:
+            return {"trade": False, "reason": "scale_in_invalido"}
+
+        btc, fee_brl = self.execution.buy_quote(add_value, price)
+        if btc <= 0:
+            return {"trade": False, "reason": "scale_in_sem_execucao"}
+
+        pos = self.position
+        old_qty = pos.quantity
+        new_qty = old_qty + btc
+        avg_entry = ((pos.entry_price * old_qty) + (price * btc)) / max(new_qty, 1e-9)
+        pos.entry_price = avg_entry
+        pos.quantity = new_qty
+        pos.entry_spent_brl += add_value
+        pos.entry_fee_brl += fee_brl
+        pos.stop_loss = avg_entry * (1.0 - (self.config.stop_loss_pct / 100.0))
+        pos.take_profit = avg_entry * (1.0 + (self.config.take_profit_pct / 100.0))
+        self.current_exposure_brl += add_value
+        self.last_trade_at = now
+        self.trade_entries_last_hour.append(now)
+        self._prune_trade_window(now)
+
+        self.last_trade = {
+            "side": "BUY",
+            "price": price,
+            "btc": btc,
+            "fee_brl": fee_brl,
+            "timestamp": now.isoformat(timespec="seconds"),
+            "reason": "scale_in",
+            "active_mode": str(
+                signal_ctx.get("active_mode") or self.active_strategy_mode
+            ),
+        }
+        return {"trade": True, "side": "BUY", "btc": btc, "entry": price, "reason": "scale_in"}
+
+    # ─── Operações manuais ───────────────────────────────────────────────
+
+    def force_buy(self, price_brl: float, motivo: str = "manual") -> float:
+        if self.position:
+            return 0.0
+        price = float(price_brl)
+        stop_price = price * (1.0 - (self.config.stop_loss_pct / 100.0))
+        take_price = price * (1.0 + (self.config.take_profit_pct / 100.0))
+        equity = self._equity_for_risk(price)
+
+        signal_ctx = self.strategy.evaluate(
+            has_position=False, selected_mode=self.selected_strategy_mode
+        )
+        self._update_risk_regime(signal_ctx)
+
+        plan = self.risk_manager.build_position_plan(
+            equity_brl=equity,
+            available_brl=self.execution.available_brl(),
+            entry_price=price,
+            stop_price=stop_price,
+            take_price=take_price,
+            max_buy_brl=self.max_buy_brl,
+            risk_per_trade_pct=self.current_risk_per_trade_pct,
+        )
+        if not plan:
+            return 0.0
+
+        opened = self._open_position(
+            plan,
+            datetime.utcnow(),
+            motivo_entrada=motivo,
+            saldo_antes=self.execution.total_balance_brl(price),
+            strategy_context=signal_ctx,
+        )
+        return float(opened.get("btc", 0.0)) if opened.get("trade") else 0.0
+
+    def force_sell(self, price_brl: float, motivo: str = "manual") -> float:
+        if not self.position:
+            return 0.0
+        closed = self._close_position(
+            float(price_brl), motivo, datetime.utcnow(), technical_reason=motivo
+        )
+        return float(closed.get("amount_brl", 0.0)) if closed.get("trade") else 0.0
+
+    # ─── Utilidades ──────────────────────────────────────────────────────
+
     def _can_open_trade(self, now: datetime) -> bool:
         if self.position:
             return False
-
         self._prune_trade_window(now)
         if len(self.trade_entries_last_hour) >= self.config.overtrading.max_trades_per_hour:
             return False
-
         if not self.last_trade_at:
             return True
-
         minimo = max(60, self.config.overtrading.min_seconds_between_trades)
         return (now - self.last_trade_at) >= timedelta(seconds=minimo)
-    
-    def _update_trailing_stop(self, price):
-        if not self.position:
-            return
 
-        pos = self.position
+    def _can_scale_position(self, signal_ctx: dict) -> bool:
+        if self.position is None:
+            return False
+        if self.position_alloc_pct >= self.max_position_size:
+            return False
+        if self.last_trade_at is not None:
+            delta = datetime.utcnow() - self.last_trade_at
+            if delta < timedelta(
+                seconds=max(60, self.config.overtrading.min_seconds_between_trades)
+            ):
+                return False
+        self._prune_trade_window(datetime.utcnow())
+        if len(self.trade_entries_last_hour) >= self.config.overtrading.max_trades_per_hour:
+            return False
+        return (
+            str(signal_ctx.get("active_mode") or "") == "tendencia"
+            and float(signal_ctx.get("ema9") or 0.0) > float(signal_ctx.get("ema21") or 0.0)
+            and float(signal_ctx.get("slope_ema9") or 0.0) > 0
+        )
 
-        if price > pos.highest_price:
-            pos.highest_price = price
-
-        profit_pct = (price - pos.entry_price) / pos.entry_price * 100
-
-        if profit_pct >= self.trailing_activation_pct:
-
-            new_stop = pos.highest_price * (1 - self.trailing_distance_pct / 100)
-
-            if new_stop > pos.stop_loss:
-                pos.stop_loss = new_stop
+    def _signal_strength(self, signal_ctx: dict) -> float:
+        dist = float(signal_ctx.get("distancia_percentual") or 0.0)
+        slope = abs(float(signal_ctx.get("slope_ema9") or 0.0))
+        atr = float(signal_ctx.get("atr") or 0.0)
+        price = float(signal_ctx.get("price") or 1.0)
+        score = min(
+            1.0,
+            (dist * 20.0)
+            + (slope / max(price, 1.0) * 200.0)
+            + (atr / max(price, 1.0) * 10.0),
+        )
+        return max(0.0, score)
 
     def _prune_trade_window(self, now: datetime) -> None:
         limit = now - timedelta(hours=1)
         while self.trade_entries_last_hour and self.trade_entries_last_hour[0] < limit:
             self.trade_entries_last_hour.popleft()
 
-    def _append_near_trade_log(self, now: datetime, signal_ctx: dict[str, Any]) -> None:
+    def _append_near_trade_log(self, now: datetime, signal_ctx: dict) -> None:
         reason = str(signal_ctx.get("reason") or "")
         warming_up = bool(signal_ctx.get("warming_up"))
         buffer_len = int(signal_ctx.get("buffer_len") or 0)
         required_periods = int(signal_ctx.get("required_periods") or 0)
-        if warming_up:
-            if required_periods > 0:
-                reason = f"buffer={buffer_len}/{required_periods} warming_up"
-            else:
-                reason = "warming_up"
+        if warming_up and required_periods > 0:
+            reason = f"buffer={buffer_len}/{required_periods} warming_up"
 
         self.near_trade_logs.append(
             {
@@ -944,7 +895,9 @@ class TradingEngine:
                 "distancia_percentual": float(signal_ctx.get("distancia_percentual") or 0.0),
                 "slope": float(signal_ctx.get("slope_ema9") or 0.0),
                 "reason": reason,
-                "active_mode": str(signal_ctx.get("active_mode") or self.active_strategy_mode),
+                "active_mode": str(
+                    signal_ctx.get("active_mode") or self.active_strategy_mode
+                ),
                 "atr": float(signal_ctx.get("atr") or 0.0),
                 "buffer_len": buffer_len,
                 "required_periods": required_periods,
@@ -963,7 +916,9 @@ class TradingEngine:
             self.peak_equity_brl = equity
 
         if self.peak_equity_brl > 0:
-            self.current_drawdown_pct = ((self.peak_equity_brl - equity) / self.peak_equity_brl) * 100
+            self.current_drawdown_pct = (
+                (self.peak_equity_brl - equity) / self.peak_equity_brl
+            ) * 100
             self.max_drawdown_pct = max(self.max_drawdown_pct, self.current_drawdown_pct)
 
         if self.current_drawdown_pct >= self.config.drawdown_pause_pct:
@@ -990,6 +945,8 @@ class TradingEngine:
         if len(self.benchmark_history) > 2000:
             self.benchmark_history = self.benchmark_history[-2000:]
 
+    # ─── Snapshot ────────────────────────────────────────────────────────
+
     def get_sharpe_simplificado(self) -> float:
         if len(self.recent_returns) < 2:
             return 0.0
@@ -1005,7 +962,11 @@ class TradingEngine:
         profit_factor = self._current_profit_factor()
         profit_factor_value = 999.0 if profit_factor == float("inf") else profit_factor
 
-        exposicao_pct = (self.current_exposure_brl / equity_operacional) * 100.0 if equity_operacional > 0 else 0.0
+        exposicao_pct = (
+            (self.current_exposure_brl / equity_operacional) * 100.0
+            if equity_operacional > 0
+            else 0.0
+        )
         total_trades = len(self.gain_values) + len(self.loss_values)
         win_rate = (len(self.gain_values) / total_trades) if total_trades > 0 else 0.0
         avg_gain = (sum(self.gain_values) / len(self.gain_values)) if self.gain_values else 0.0
@@ -1023,10 +984,14 @@ class TradingEngine:
             "ema_above_sma": ema9 > ema21 if ema21 > 0 else False,
             "sma_slope_up": slope > 0,
             "low_above_ema": True,
-            "distancia_ok": (dist_pct > 0) and (atr > 0) and ((abs(ema9 - ema21)) > atr_gate),
+            "distancia_ok": (dist_pct > 0) and (atr > 0) and (abs(ema9 - ema21) > atr_gate),
         }
         confluence_ok_count = sum(1 for v in confluence.values() if v)
-        confluence["veredito"] = "Confluencia confirmada" if confluence_ok_count >= 3 else "Aguardando confluencia"
+        confluence["veredito"] = (
+            "Confluencia confirmada"
+            if confluence_ok_count >= 3
+            else "Aguardando confluencia"
+        )
 
         return {
             "mode": self.mode,
@@ -1059,7 +1024,9 @@ class TradingEngine:
             "current_risk_per_trade_pct": self.current_risk_per_trade_pct,
             "consecutive_wins": self.consecutive_wins,
             "consecutive_losses": self.consecutive_losses,
-            "pause_until": self.pause_until.isoformat(timespec="seconds") if self.pause_until else "",
+            "pause_until": (
+                self.pause_until.isoformat(timespec="seconds") if self.pause_until else ""
+            ),
             "equity_history": self.equity_history[-500:],
             "benchmark_history": self.benchmark_history[-500:],
             "trade_history": self.trade_history[-200:],
@@ -1068,7 +1035,13 @@ class TradingEngine:
             "avg_gain": avg_gain,
             "avg_loss": avg_loss,
             "expectancy": expectancy,
-            "risk_status": "verde" if self.current_drawdown_pct < 6 else "amarelo" if self.current_drawdown_pct < 10 else "vermelho",
+            "risk_status": (
+                "verde"
+                if self.current_drawdown_pct < 6
+                else "amarelo"
+                if self.current_drawdown_pct < 10
+                else "vermelho"
+            ),
             "confluence": confluence,
             "last_signal_context": self.last_signal_context,
             "total_cross": self.total_cross,
@@ -1078,5 +1051,3 @@ class TradingEngine:
             "trades_prejuizo": len(self.loss_values),
             "lucro_total_brl": self.lucro_hoje_brl,
         }
-
-        print("Candles disponíveis:", len(self.candles))

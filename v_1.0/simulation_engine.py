@@ -24,7 +24,7 @@ class SimulationConfig:
     taxa_taker_pct: float = 0.0004
     latencia_min_ms: int = 80
     latencia_max_ms: int = 240
-    aplicar_sleep_latencia: bool = True
+    aplicar_sleep_latencia: bool = False   # False por padrão: não trava o loop
     log_path: str = "simulation_log.txt"
 
 
@@ -39,10 +39,10 @@ class Position:
 
 class SimulationEngine:
     """
-    Engine de simulacao simplificado:
-    - Estrategia unica: EMA7 x SMA40
-    - Entrada por cruzamento real em candles fechados (-3 e -2)
-    - Saida por perda de EMA7, cruzamento contrario ou trailing EMA7
+    Engine de simulação simplificado:
+    - Estratégia: EMA7 x SMA40
+    - Entrada por cruzamento real em candles fechados
+    - Saída por: mínima abaixo da EMA7, cruzamento contrário, trailing EMA7
     """
 
     def __init__(self, config: SimulationConfig | None = None):
@@ -60,6 +60,9 @@ class SimulationEngine:
         self.trades_lucrativos = 0
         self.trades_prejuizo = 0
 
+        # FIX: removida referência a self.current_index que não existia
+        self.current_index = 0
+
         self.equity_history: list[float] = [self.capital]
         self.benchmark_history: list[float] = []
         self.trades: list[dict[str, Any]] = []
@@ -69,25 +72,28 @@ class SimulationEngine:
         self._ensure_log_header()
 
     def rodar(self) -> dict[str, Any]:
-        print ("simulação inciada")
+        print("Simulação iniciada")
         try:
             candles = self._baixar_dados_binance()
             if candles.empty:
                 raise RuntimeError("Sem dados para simulação.")
             candles = self._preparar_indicadores(candles)
             if len(candles) < 45:
-                raise RuntimeError("Quantidade insuficiente de candles para EMA7/SMA40.")
+                raise RuntimeError(
+                    "Quantidade insuficiente de candles para EMA7/SMA40."
+                )
         except Exception as exc:
             print(f"[ERRO] {exc}")
             return {"ok": False, "error": str(exc)}
 
-        # A cada iteração, o candle idx é tratado como em formação.
-        # Sinais usam somente candles fechados idx-2 e idx-1.
         for idx in range(2, len(candles)):
-            print(f"Processando candle {self.current_index}")
+            # FIX: atualiza self.current_index corretamente
+            self.current_index = idx
+            print(f"Processando candle {self.current_index}/{len(candles)}")
+
             now = candles.iloc[idx]["open_time"]
-            c3 = candles.iloc[idx - 2]  # -3
-            c2 = candles.iloc[idx - 1]  # -2 (último fechado)
+            c3 = candles.iloc[idx - 2]
+            c2 = candles.iloc[idx - 1]
 
             close2 = float(c2["close"])
             low2 = float(c2["low"])
@@ -137,6 +143,7 @@ class SimulationEngine:
             self.cross_executados += 1
             self.equity_history.append(self._equity_mark_to_market(close2))
 
+        # Fecha posição aberta ao final da simulação
         if self.position is not None and len(candles) > 0:
             last = candles.iloc[-1]
             self._close_position(
@@ -151,7 +158,9 @@ class SimulationEngine:
         self._print_report(stats)
         return {"ok": True, **stats}
 
-    def _check_exit_by_rules(self, now: datetime, c2: pd.Series, c3: pd.Series) -> bool:
+    def _check_exit_by_rules(
+        self, now: datetime, c2: pd.Series, c3: pd.Series
+    ) -> bool:
         if self.position is None:
             return False
 
@@ -161,7 +170,7 @@ class SimulationEngine:
         ema3 = float(c3["ema7"])
         sma3 = float(c3["sma40"])
 
-        # 1) mínima fechada abaixo da EMA7
+        # 1) Mínima fechada abaixo da EMA7
         if low2 < ema2:
             self._close_position(
                 when=now,
@@ -171,7 +180,7 @@ class SimulationEngine:
             )
             return True
 
-        # 2) cruzamento contrário EMA7 abaixo da SMA40
+        # 2) Cruzamento contrário EMA7 abaixo da SMA40
         crossed_down = ema3 >= sma3 and ema2 < sma2
         if crossed_down:
             self._close_position(
@@ -182,7 +191,7 @@ class SimulationEngine:
             )
             return True
 
-        # 3) trailing pela EMA7
+        # 3) Trailing pela EMA7
         trailing_stop = ema2 * 0.995
         if low2 <= trailing_stop:
             self._close_position(
@@ -210,7 +219,9 @@ class SimulationEngine:
         pct = min(0.35, max(0.0, pct))
         return min(self.capital, self.capital * pct)
 
-    def _open_position(self, now: datetime, reference_price: float, quote_brl: float) -> None:
+    def _open_position(
+        self, now: datetime, reference_price: float, quote_brl: float
+    ) -> None:
         if self.position is not None or reference_price <= 0 or quote_brl <= 0:
             return
 
@@ -240,14 +251,22 @@ class SimulationEngine:
             saldo_apos=self.capital,
         )
 
-    def _close_position(self, when: datetime, exit_ref_price: float, reason: str, fee_type: str) -> None:
+    def _close_position(
+        self,
+        when: datetime,
+        exit_ref_price: float,
+        reason: str,
+        fee_type: str,
+    ) -> None:
         if self.position is None:
             return
 
         self._simulate_latency()
         pos = self.position
         exit_exec = self._apply_slippage(exit_ref_price, side="sell")
-        fee_rate = self.cfg.taxa_taker_pct if fee_type == "taker" else self.cfg.taxa_maker_pct
+        fee_rate = (
+            self.cfg.taxa_taker_pct if fee_type == "taker" else self.cfg.taxa_maker_pct
+        )
         gross = pos.qty_btc * exit_exec
         exit_fee = gross * fee_rate
         net_exit = gross - exit_fee
@@ -298,14 +317,20 @@ class SimulationEngine:
         losses = [float(t["net_pnl"]) for t in self.trades if float(t["net_pnl"]) <= 0]
         total_trades = len(self.trades)
 
-        win_rate = (self.trades_lucrativos / total_trades) * 100.0 if total_trades > 0 else 0.0
+        win_rate = (
+            (self.trades_lucrativos / total_trades) * 100.0 if total_trades > 0 else 0.0
+        )
         avg_gain = float(np.mean(gains)) if gains else 0.0
         avg_loss = float(np.mean(losses)) if losses else 0.0
         payoff_medio = (avg_gain / abs(avg_loss)) if avg_loss < 0 else 0.0
 
         gross_profit = float(sum(gains)) if gains else 0.0
         gross_loss = float(abs(sum(losses))) if losses else 0.0
-        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (math.inf if gross_profit > 0 else 0.0)
+        profit_factor = (
+            (gross_profit / gross_loss)
+            if gross_loss > 0
+            else (math.inf if gross_profit > 0 else 0.0)
+        )
 
         ret_arr = np.array(self.trade_returns, dtype=float)
         if ret_arr.size > 1 and float(ret_arr.std(ddof=0)) > 0:
@@ -313,7 +338,11 @@ class SimulationEngine:
         else:
             sharpe = 0.0
 
-        retorno_total_pct = ((self.capital - self.initial_capital) / self.initial_capital) * 100.0 if self.initial_capital > 0 else 0.0
+        retorno_total_pct = (
+            ((self.capital - self.initial_capital) / self.initial_capital) * 100.0
+            if self.initial_capital > 0
+            else 0.0
+        )
 
         return {
             "capital_inicial": self.initial_capital,
@@ -337,24 +366,28 @@ class SimulationEngine:
 
     def _print_report(self, stats: dict[str, Any]) -> None:
         print("===== RELATÓRIO FINAL EMA7/SMA40 =====")
-        print(f"Capital inicial: {float(stats['capital_inicial']):.2f}")
-        print(f"Capital final: {float(stats['capital_final']):.2f}")
-        print(f"Total cross: {int(stats['total_cross'])}")
-        print(f"Cross filtrados: {int(stats['cross_filtrados'])}")
+        print(f"Capital inicial : R$ {float(stats['capital_inicial']):.2f}")
+        print(f"Capital final   : R$ {float(stats['capital_final']):.2f}")
+        print(f"Total cross     : {int(stats['total_cross'])}")
+        print(f"Cross filtrados : {int(stats['cross_filtrados'])}")
         print(f"Cross executados: {int(stats['cross_executados'])}")
-        print(f"Trades lucrativos: {int(stats['trades_lucrativos'])}")
-        print(f"Trades prejuízo: {int(stats['trades_prejuizo'])}")
-        print(f"Win rate: {float(stats['win_rate_pct']):.2f}%")
-        print(f"Payoff médio: {float(stats['payoff_medio']):.4f}")
-        print(f"Profit factor: {float(stats['profit_factor']):.4f}")
-        print(f"Sharpe ratio: {float(stats['sharpe_ratio']):.4f}")
-        print(f"Retorno total: {float(stats['retorno_total_pct']):.2f}%")
-        print(f"Máximo drawdown: {float(stats['drawdown_maximo_pct']):.2f}%")
+        print(f"Lucrativos      : {int(stats['trades_lucrativos'])}")
+        print(f"Prejuízo        : {int(stats['trades_prejuizo'])}")
+        print(f"Win rate        : {float(stats['win_rate_pct']):.2f}%")
+        print(f"Payoff médio    : {float(stats['payoff_medio']):.4f}")
+        print(f"Profit factor   : {float(stats['profit_factor']):.4f}")
+        print(f"Sharpe ratio    : {float(stats['sharpe_ratio']):.4f}")
+        print(f"Retorno total   : {float(stats['retorno_total_pct']):.2f}%")
+        print(f"Máx. drawdown   : {float(stats['drawdown_maximo_pct']):.2f}%")
         print("[SIMULATION END]")
 
     def _baixar_dados_binance(self) -> pd.DataFrame:
         url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": self.cfg.symbol, "interval": self.cfg.interval, "limit": self.cfg.limit}
+        params = {
+            "symbol": self.cfg.symbol,
+            "interval": self.cfg.interval,
+            "limit": self.cfg.limit,
+        }
         try:
             resp = requests.get(url, params=params, timeout=20)
             resp.raise_for_status()
@@ -366,25 +399,18 @@ class SimulationEngine:
             raise RuntimeError("Resposta inválida da Binance.")
 
         cols = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_asset_volume",
-            "num_trades",
-            "taker_buy_base",
-            "taker_buy_quote",
-            "ignore",
+            "open_time", "open", "high", "low", "close", "volume",
+            "close_time", "quote_asset_volume", "num_trades",
+            "taker_buy_base", "taker_buy_quote", "ignore",
         ]
         df = pd.DataFrame(data, columns=cols)
         for c in ("open", "high", "low", "close", "volume"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
-        return df.dropna(subset=["open", "high", "low", "close", "volume"]).reset_index(drop=True)
+        return df.dropna(subset=["open", "high", "low", "close", "volume"]).reset_index(
+            drop=True
+        )
 
     def _preparar_indicadores(self, df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
@@ -413,14 +439,20 @@ class SimulationEngine:
     def _update_drawdown(self, equity: float) -> None:
         if equity > self.equity_peak:
             self.equity_peak = equity
-        dd = ((self.equity_peak - equity) / self.equity_peak) * 100.0 if self.equity_peak > 0 else 0.0
+        dd = (
+            ((self.equity_peak - equity) / self.equity_peak) * 100.0
+            if self.equity_peak > 0
+            else 0.0
+        )
         self.max_drawdown_pct = max(self.max_drawdown_pct, dd)
 
     def _ensure_log_header(self) -> None:
         if self.log_file.exists() and self.log_file.stat().st_size > 0:
             return
         with self.log_file.open("a", encoding="utf-8") as fp:
-            fp.write("data_hora | tipo | preco | quantidade | fee | pnl_liquido | motivo | saldo_apos\n")
+            fp.write(
+                "data_hora | tipo | preco | quantidade | fee | pnl_liquido | motivo | saldo_apos\n"
+            )
 
     def _log_trade(
         self,

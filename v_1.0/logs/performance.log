@@ -11,3 +11,5 @@
 2026-03-07 13:08:00,718 | TRADE_CLOSE | lucro=0.01 | lucro_pct=0.24 | saldo_final=299.91
 2026-03-07 13:16:04,664 | TRADE_CLOSE | lucro=-0.01 | lucro_pct=-0.09 | saldo_final=299.91
 2026-03-07 13:33:09,797 | TRADE_CLOSE | lucro=0.01 | lucro_pct=0.23 | saldo_final=299.92
+2026-04-18 14:26:10,074 | TRADE_CLOSE | lucro=-0.08 | lucro_pct=-0.27 | saldo_final=299.92
+2026-04-18 15:02:35,602 | TRADE_CLOSE | lucro=-0.06 | lucro_pct=-0.21 | saldo_final=299.85
