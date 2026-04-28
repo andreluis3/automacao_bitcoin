@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from database.database import TradeDatabase
+from database.connection import TradeDatabase
 
 
 class StructuredTradeLogger:

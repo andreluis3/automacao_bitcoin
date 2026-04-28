@@ -8,7 +8,7 @@ class UIBridge:
         self.app = app
 
     def update_dashboard(self, snapshot: dict) -> None:
-        price = float(snapshot.get("price_usdt", 0.0))
+        price = float(snapshot.get("price_usdt") or snapshot.get("price_brl") or 0.0)
         variation = float(snapshot.get("variation_pct", 0.0))
         equity = float(snapshot.get("equity_brl", 0.0))
         drawdown = float(snapshot.get("current_drawdown_pct", 0.0))

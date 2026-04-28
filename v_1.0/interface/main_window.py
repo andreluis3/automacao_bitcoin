@@ -476,16 +476,16 @@ class TradingApp(ctk.CTk):
     def loop_principal(self) -> None:
         self._flush_pending_logs()
         snapshot = self.controller.get_runtime_snapshot()
-        self._redesenhar_grafico(float(snapshot.get("price_usdt", 0.0)))
+        preco_grafico = float(snapshot.get("price_usdt") or snapshot.get("price_brl") or 0.0)
+        self._redesenhar_grafico(preco_grafico)
         self._update_performance_tab(snapshot)
         self.bridge.update_dashboard(snapshot)
         self.after(1000, self.loop_principal)
 
     def _on_start_clicked(self) -> None:
         print("BOTAO START CLICADO")
-        result = self.controller.start()
-        print("RESULTADO START:", result)
-        ok, msg = self.controller.start_bot()
+        ok, msg = self.controller.start()
+        print("RESULTADO START:", (ok, msg))
         self.bridge.log_message(msg)
         self._atualizar_botoes_por_estado()
 
