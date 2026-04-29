@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 2026-04-28 10:29:20 | [ORDER] BUY | BTC/BRL | Preço=R$380,409.00 | Qtd=0.00007878 BTC | Valor=R$30.00 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
 2026-04-28 10:29:23 | [ORDER] SELL | BTC/BRL | Preço=R$380,561.00 | Qtd=0.00007878 BTC | Valor=R$29.95 | Taxa=R$0.0300 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
 2026-04-28 10:32:26 | [ORDER] BUY | BTC/BRL | Preço=R$380,028.00 | Qtd=0.00007885 BTC | Valor=R$30.00 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
@@ -20,3 +21,16 @@
 2026-04-28 13:31:52 | [ORDER] SELL | BTC/BRL | Preço=R$378,601.00 | Qtd=0.00007896 BTC | Valor=R$29.86 | Taxa=R$0.0299 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
 2026-04-28 14:09:31 | [ORDER] BUY | BTC/BRL | Preço=R$378,960.00 | Qtd=0.00007893 BTC | Valor=R$29.94 | Taxa=R$0.0299 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
 2026-04-28 14:10:18 | [ORDER] SELL | BTC/BRL | Preço=R$378,738.00 | Qtd=0.00007893 BTC | Valor=R$29.86 | Taxa=R$0.0299 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+=======
+2026-04-28 06:32:00 | [ORDER] BUY | BTC/BRL | Preço=R$382,283.00 | Qtd=0.00007840 BTC | Valor=R$30.00 | Taxa=R$0.0300 | Motivo=lateral_banda_inferior (pos=-0.25) | Status=EXECUTADA
+2026-04-28 06:33:19 | [ORDER] SELL | BTC/BRL | Preço=R$382,344.00 | Qtd=0.00007840 BTC | Valor=R$29.94 | Taxa=R$0.0300 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-04-28 06:37:21 | [ORDER] BUY | BTC/BRL | Preço=R$382,074.00 | Qtd=0.00007843 BTC | Valor=R$29.99 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
+2026-04-28 06:37:29 | [ORDER] SELL | BTC/BRL | Preço=R$381,971.00 | Qtd=0.00007843 BTC | Valor=R$29.93 | Taxa=R$0.0300 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-04-28 13:40:04 | [ORDER] BUY | BTC/BRL | Preço=R$382,425.45 | Qtd=0.00007834 BTC | Valor=R$29.99 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
+2026-04-28 13:40:12 | [ORDER] SELL | BTC/BRL | Preço=R$381,096.80 | Qtd=0.00007834 BTC | Valor=R$29.82 | Taxa=R$0.0299 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-04-28 13:42:05 | [ORDER] BUY | BTC/BRL | Preço=R$381,639.49 | Qtd=0.00007845 BTC | Valor=R$29.97 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
+2026-04-28 13:42:30 | [ORDER] SELL | BTC/BRL | Preço=R$380,796.73 | Qtd=0.00007845 BTC | Valor=R$29.85 | Taxa=R$0.0299 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-04-28 13:44:07 | [ORDER] BUY | BTC/BRL | Preço=R$382,278.67 | Qtd=0.00007829 BTC | Valor=R$29.96 | Taxa=R$0.0300 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
+2026-04-28 13:44:22 | [ORDER] SELL | BTC/BRL | Preço=R$381,283.30 | Qtd=0.00007829 BTC | Valor=R$29.82 | Taxa=R$0.0299 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-04-28 14:15:03 | [ORDER] BUY | BTC/BRL | Preço=R$383,558.29 | Qtd=0.00007799 BTC | Valor=R$29.94 | Taxa=R$0.0299 | Motivo=tendencia_agressiva_sem_crossover | Status=EXECUTADA
+>>>>>>> bcb2276 ( nova strategy engine com filtro de mercado)

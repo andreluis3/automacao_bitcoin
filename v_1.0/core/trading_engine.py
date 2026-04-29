@@ -334,6 +334,18 @@ class TradingEngine:
         """
         self.strategy.set_regime_threshold(threshold)
 
+    def set_eval_throttle(self, seconds: float) -> None:
+        """Intervalo mínimo entre avaliações de sinal (evita overtrading em ticks)."""
+        self.strategy.set_eval_throttle(seconds)
+    
+    def set_min_dist_pct(self, pct: float) -> None:
+        """Distância mínima EMA9/EMA21 para aceitar sinal de entrada."""
+        self.strategy.set_min_dist_pct(pct)
+    
+    def set_block_lateral(self, enabled: bool) -> None:
+        """Se True, não opera em mercado lateral (ignora scalping)."""
+        self.strategy.set_block_lateral(enabled)
+
     def set_risk_profile(self, profile_name: str) -> None:
         key = str(profile_name).strip().lower()
         if key == "conservador":
@@ -522,7 +534,8 @@ class TradingEngine:
         self.position_alloc_pct = self.risk_manager.initial_alloc_pct
         trade_value = capital_total * self.position_alloc_pct
 
-        plan = self._build_plan_from_value(price, trade_value, self.current_risk_per_trade_pct)
+        signal_strength = float(signal_ctx.get("signal_strength") or 0.5)
+        plan = self._build_plan_from_value(price, trade_value, self.current_risk_per_trade_pct, signal_strength)
         if not plan:
             self._append_near_trade_log(now, {**signal_ctx, "reason": "sem_position_size"})
             return {"trade": False, "reason": "sem_position_size", "drawdown": self.current_drawdown_pct}
@@ -548,25 +561,55 @@ class TradingEngine:
                                    motivo_entrada=str(signal_ctx.get("reason") or "entry"),
                                    strategy_context=signal_ctx)
 
-    # ─── Operações de posição ─────────────────────────────────────────────────
-
-    def _build_plan_from_value(self, price: float, trade_value: float,
-                               risk_per_trade_pct: float) -> Optional[PositionPlan]:
+        # ─── Operações de posição ─────────────────────────────────────────────────
+    def _build_plan_from_value(
+        self,
+        price: float,
+        trade_value: float,
+        risk_per_trade_pct: float,
+        signal_strength: float = 0.5,   # NOVO: 0.0-1.0
+    ) -> "Optional[PositionPlan]":
+        """
+        CAMADA 4 — Position sizing inteligente.
+    
+        signal_strength ajusta o valor da posição:
+        0.0–0.3  → 50% do valor base  (sinal fraco)
+        0.3–0.6  → 100% do valor base (sinal médio)
+        0.6–1.0  → 150% do valor base (sinal forte, limitado pelo config)
+    
+        Isso resolve o problema de "vender centavos" —
+        quando o sinal é forte, coloca mais capital na posição.
+        """
         if price <= 0 or trade_value <= 0:
             return None
+    
+        # Multiplica pelo fator de força
+        if signal_strength >= 0.6:
+            sizing_mult = 1.5
+        elif signal_strength >= 0.3:
+            sizing_mult = 1.0
+        else:
+            sizing_mult = 0.5
+    
+        adjusted_value = trade_value * sizing_mult
+    
         stop_price = price * (1.0 - self.config.stop_loss_pct / 100.0)
         take_price = price * (1.0 + self.config.take_profit_pct / 100.0)
-        qty = trade_value / price
+        qty = adjusted_value / price
         if qty <= 0:
             return None
+    
+        from core.risk_manager import PositionPlan
         return PositionPlan(
-            quantity=qty, entry_price=price,
-            stop_loss=stop_price, take_profit=take_price,
-            risk_brl=trade_value * (self.config.stop_loss_pct / 100.0),
+            quantity=qty,
+            entry_price=price,
+            stop_loss=stop_price,
+            take_profit=take_price,
+            risk_brl=adjusted_value * (self.config.stop_loss_pct / 100.0),
             risk_pct=self.config.stop_loss_pct,
-            notional_brl=trade_value, risk_per_trade_pct=risk_per_trade_pct,
+            notional_brl=adjusted_value,
+            risk_per_trade_pct=risk_per_trade_pct,
         )
-
     def _open_position(self, plan: PositionPlan, now: datetime,
                        motivo_entrada: str = "strategy", saldo_antes: Optional[float] = None,
                        strategy_context: Optional[dict] = None) -> dict[str, Any]:

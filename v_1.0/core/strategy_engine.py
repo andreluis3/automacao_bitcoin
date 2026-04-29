@@ -1,21 +1,35 @@
 """
-strategy_engine.py — Motor de estratégia corrigido.
+strategy_engine.py — Arquitetura em 4 camadas com EMA38 como filtro macro.
 
-Problemas resolvidos vs versão anterior:
-1. ADX baseado em ticks de 1-2s sempre detectava lateral → detector novo
-   baseado em slope da EMA21 normalizado pelo preço (calibrado para BTC/BRL).
-2. Modo agressivo: entra se EMA9 > EMA21 sem exigir crossover.
-3. Modo lateral: scalping por reversão à média (Bollinger Bands).
-4. Thresholds calibrados para ticks de 1-2 segundos em BTC/BRL (~R$383.000).
+CAMADA 1 — Detector de regime
+  Usa slope da EMA38 + distância EMA9/EMA21 para classificar:
+    TENDENCIA_FORTE → opera normalmente
+    TENDENCIA_FRACA → opera com filtros mais rígidos
+    LATERAL         → bloqueia entrada, ou usa scalping Bollinger
+
+CAMADA 2 — Lógica diferente por modo
+  TENDÊNCIA: confirmação em cascata EMA9 > EMA21 > EMA38
+  LATERAL:   Bollinger Bands (compra fundo, vende topo)
+
+CAMADA 3 — Filtros de qualidade
+  distância mínima EMA9/EMA21, slope consistente, ATR gate
+
+CAMADA 4 — Sinal de força (para position sizing no engine)
+  Retorna signal_strength 0.0–1.0 baseado em quantas camadas confirmam
+
+AVALIAÇÃO A CADA N SEGUNDOS (throttle)
+  Evita overtrading em ticks de 1-2s. Padrão: avalia a cada 5s no máximo.
 """
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 
+# ─── ATR Calculator ──────────────────────────────────────────────────────────
 class AtrCalculator:
     def __init__(self, period: int = 14):
         self.period = max(2, int(period))
@@ -25,73 +39,104 @@ class AtrCalculator:
 
     def update(self, high: float, low: float, close: float) -> None:
         h, l, c = float(high), float(low), float(close)
-        if self._prev_close is None:
-            tr = h - l
-        else:
-            tr = max(h - l, abs(h - self._prev_close), abs(l - self._prev_close))
+        tr = max(h - l, abs(h - self._prev_close), abs(l - self._prev_close)) \
+             if self._prev_close is not None else (h - l)
         self._trs.append(tr)
         self._prev_close = c
         if len(self._trs) >= self.period:
-            if self._atr is None:
-                self._atr = sum(self._trs) / len(self._trs)
-            else:
-                self._atr = (self._atr * (self.period - 1) + tr) / self.period
+            self._atr = ((self._atr * (self.period - 1) + tr) / self.period) \
+                        if self._atr is not None else sum(self._trs) / len(self._trs)
 
     def value(self) -> Optional[float]:
         return self._atr
 
 
+# ─── Configuração ─────────────────────────────────────────────────────────────
 @dataclass
 class StrategyConfig:
-    ema_fast_period: int   = 9
-    ema_slow_period: int   = 21
-    atr_period: int        = 14
-    atr_min_factor: float  = 0.2
-    slope_lookback: int    = 5
-    bb_period: int         = 20
-    bb_num_std: float      = 2.0
+    # ── Períodos das EMAs ──────────────────────────────────────────────────
+    ema_fast_period:  int = 9    # EMA rápida — sinal de entrada
+    ema_mid_period:   int = 21   # EMA intermediária — confirmação
+    ema_slow_period:  int = 38   # EMA lenta (NOVA) — filtro macro de tendência
+    atr_period:       int = 14
+    bb_period:        int = 20
+    bb_num_std:       float = 2.0
 
-    # Distância mínima entre EMAs — 0.0001 = 0.01% = R$38 em R$383.000
-    min_dist_pct: float = 0.0001
+    # ── Lookback para cálculo de slope ────────────────────────────────────
+    slope_lookback: int = 8  # aumentado de 5 → 8 para slope mais estável
 
-    # Slope mínimo da EMA9 (valor absoluto em R$); 0 = aceita qualquer positivo
-    min_slope: float = 0.0
+    # ── Distância mínima EMA9/EMA21 (CAMADA 3) ───────────────────────────
+    # 0.0005 = 0.05% de R$379.000 ≈ R$190 — filtra cruzamentos de ruído
+    min_dist_pct: float = 0.0005
 
-    # Detector de regime: slope normalizado da EMA21
-    # 0.000005 = calibrado para ticks de 1-2s em BTC/BRL
-    # Menor = detecta tendência mais fácil | Maior = fica lateral mais tempo
-    regime_slope_threshold: float = 0.000005
+    # ── ATR gate ──────────────────────────────────────────────────────────
+    atr_min_factor: float = 0.3
 
-    # Modo agressivo: entra se EMA9 > EMA21 sem exigir crossover
+    # ── Detector de regime (CAMADA 1) ────────────────────────────────────
+    # Slope da EMA38 normalizado pelo preço
+    # 0.000008 = R$3/tick em R$379.000 → tendência real
+    regime_slope_threshold: float = 0.000008
+
+    # Distância EMA9/EMA21 abaixo deste valor → mercado "colado" → LATERAL
+    lateral_dist_threshold: float = 0.0003   # 0.03%
+
+    # ── Throttle: mínimo de segundos entre avaliações ─────────────────────
+    # Evita overtrading em ticks de 1-2s. 0 = sem throttle.
+    eval_throttle_sec: float = 5.0
+
+    # ── Modos ─────────────────────────────────────────────────────────────
+    # Modo agressivo: entra sem exigir crossover, só EMA9 > EMA21 > EMA38
     aggressive_no_crossover: bool = False
 
     # Modo lateral: scalping por Bollinger Bands
     lateral_bb_entry: bool = True
     lateral_bb_exit:  bool = True
 
+    # Bloquear operação quando lateral (sem scalping)
+    block_when_lateral: bool = False
 
+
+# ─── Engine ───────────────────────────────────────────────────────────────────
 class StrategyEngine:
     def __init__(self, config: Optional[StrategyConfig] = None):
         self.config = config or StrategyConfig()
 
-        self.prices:  deque[float] = deque(maxlen=3000)
-        self.highs:   deque[float] = deque(maxlen=3000)
-        self.lows:    deque[float] = deque(maxlen=3000)
-        self.volumes: deque[float] = deque(maxlen=3000)
+        self.prices:  deque[float] = deque(maxlen=5000)
+        self.highs:   deque[float] = deque(maxlen=5000)
+        self.lows:    deque[float] = deque(maxlen=5000)
+        self.volumes: deque[float] = deque(maxlen=5000)
 
-        self.ema_fast: deque[float] = deque(maxlen=3000)
-        self.ema_slow: deque[float] = deque(maxlen=3000)
+        self.ema_fast: deque[float] = deque(maxlen=5000)  # EMA9
+        self.ema_mid:  deque[float] = deque(maxlen=5000)  # EMA21
+        self.ema_slow: deque[float] = deque(maxlen=5000)  # EMA38 (NOVO)
+
         self.atr_calc = AtrCalculator(period=self.config.atr_period)
 
+        # Bollinger
         self._bb_upper: Optional[float] = None
         self._bb_lower: Optional[float] = None
         self._bb_mid:   Optional[float] = None
 
-    def _required_periods(self) -> int:
-        return max(self.config.ema_slow_period, self.config.slope_lookback + 1)
+        # Throttle de avaliação
+        self._last_eval_time: Optional[datetime] = None
+        self._last_eval_result: Optional[dict] = None
 
-    def update_tick(self, price: float, high: Optional[float] = None,
-                    low: Optional[float] = None, volume: float = 0.0) -> None:
+    # ─── Required periods ────────────────────────────────────────────────────
+    def _required_periods(self) -> int:
+        return max(
+            self.config.ema_slow_period,
+            self.config.slope_lookback + 1,
+            self.config.bb_period,
+        )
+
+    # ─── Update tick ─────────────────────────────────────────────────────────
+    def update_tick(
+        self,
+        price: float,
+        high: Optional[float] = None,
+        low: Optional[float] = None,
+        volume: float = 0.0,
+    ) -> None:
         p = float(price)
         if p <= 0:
             return
@@ -103,26 +148,28 @@ class StrategyEngine:
         self.lows.append(l)
         self.volumes.append(max(0.0, float(volume)))
 
-        self._update_ema(p)
+        self._update_emas(p)
         self.atr_calc.update(h, l, p)
         self._update_bollinger()
 
-    def _update_ema(self, price: float) -> None:
-        af  = 2.0 / (self.config.ema_fast_period + 1.0)
-        as_ = 2.0 / (self.config.ema_slow_period + 1.0)
-        pf  = self.ema_fast[-1] if self.ema_fast else price
-        ps  = self.ema_slow[-1] if self.ema_slow else price
-        self.ema_fast.append(price * af  + pf * (1.0 - af))
-        self.ema_slow.append(price * as_ + ps * (1.0 - as_))
+    def _update_emas(self, price: float) -> None:
+        def _ema(series: deque, period: int) -> float:
+            alpha = 2.0 / (period + 1.0)
+            prev  = series[-1] if series else price
+            return price * alpha + prev * (1.0 - alpha)
+
+        self.ema_fast.append(_ema(self.ema_fast, self.config.ema_fast_period))
+        self.ema_mid.append( _ema(self.ema_mid,  self.config.ema_mid_period))
+        self.ema_slow.append(_ema(self.ema_slow, self.config.ema_slow_period))
 
     def _update_bollinger(self) -> None:
         n = self.config.bb_period
         if len(self.prices) < n:
             self._bb_upper = self._bb_lower = self._bb_mid = None
             return
-        window = list(self.prices)[-n:]
-        mid = sum(window) / n
-        std = (sum((x - mid) ** 2 for x in window) / n) ** 0.5
+        w   = list(self.prices)[-n:]
+        mid = sum(w) / n
+        std = (sum((x - mid) ** 2 for x in w) / n) ** 0.5
         self._bb_mid   = mid
         self._bb_upper = mid + self.config.bb_num_std * std
         self._bb_lower = mid - self.config.bb_num_std * std
@@ -132,156 +179,223 @@ class StrategyEngine:
             return 0.0
         return float(series[-1] - series[-lookback])
 
-    def _detect_regime(self, price: float) -> str:
+    # ─── CAMADA 1: Detector de regime ────────────────────────────────────────
+    def _detect_regime(
+        self, price: float, ema9: float, ema21: float, ema38: float
+    ) -> str:
         """
-        Detecta regime pelo slope normalizado da EMA21.
-
-        Para BTC/BRL ≈ R$383.000 em ticks de 1-2s:
-          slope de R$2/tick → pct ≈ 0.0000052 → TENDÊNCIA (limiar padrão 0.000005)
-          slope de R$1/tick → pct ≈ 0.0000026 → LATERAL
-
-        Ajuste via set_regime_threshold() ou config.regime_slope_threshold.
+        TENDENCIA_FORTE  → EMA9 > EMA21 > EMA38, slope38 alto, dist9_21 > threshold
+        TENDENCIA_FRACA  → alinhamento parcial
+        LATERAL          → EMAs coladas, slope baixo
         """
         if price <= 0:
             return "lateral"
-        slope21 = self._slope(self.ema_slow, self.config.slope_lookback)
-        slope_pct = abs(slope21) / price
+
+        slope38  = self._slope(self.ema_slow, self.config.slope_lookback)
+        slope_pct = abs(slope38) / price
+        dist9_21 = abs(ema9 - ema21) / ema21 if ema21 > 0 else 0.0
+
+        # EMA colada → lateral imediato
+        if dist9_21 < self.config.lateral_dist_threshold:
+            return "lateral"
+
+        # Slope da EMA38 forte → tendência
         if slope_pct >= self.config.regime_slope_threshold:
-            return "tendencia"
+            # Verificar alinhamento cascata
+            if (ema9 > ema21 > ema38) or (ema9 < ema21 < ema38):
+                return "tendencia_forte"
+            return "tendencia_fraca"
+
         return "lateral"
 
-    # ── Avaliação principal ──────────────────────────────────────────────────
+    # ─── Evaluate principal ───────────────────────────────────────────────────
     def evaluate(self, has_position: bool, selected_mode: str = "auto") -> dict:
         required = self._required_periods()
         buf_len  = len(self.prices)
 
+        # Aquecimento
         if buf_len < required:
             price = float(self.prices[-1]) if self.prices else 0.0
-            ema9  = float(self.ema_fast[-1]) if self.ema_fast else price
-            ema21 = float(self.ema_slow[-1]) if self.ema_slow else price
-            dist  = abs(ema9 - ema21)
+            e9    = float(self.ema_fast[-1]) if self.ema_fast else price
+            e21   = float(self.ema_mid[-1])  if self.ema_mid  else price
+            e38   = float(self.ema_slow[-1]) if self.ema_slow else price
             return {
                 "signal": "none", "reason": "dados_insuficientes",
-                "price": price, "ema9": ema9, "ema21": ema21,
-                "ema9_prev": ema9, "ema21_prev": ema21,
-                "distancia_absoluta": dist,
-                "distancia_percentual": dist / ema21 if ema21 > 0 else 0.0,
-                "slope_ema9": 0.0, "slope_ema21": 0.0,
+                "price": price, "ema9": e9, "ema21": e21, "ema38": e38,
+                "ema9_prev": e9, "ema21_prev": e21,
+                "distancia_percentual": 0.0, "distancia_absoluta": 0.0,
+                "slope_ema9": 0.0, "slope_ema21": 0.0, "slope_ema38": 0.0,
                 "atr": None, "atr_gate": None,
                 "bb_upper": None, "bb_lower": None, "bb_mid": None,
-                "volume": 0.0, "avg_volume": 0.0,
+                "volume": 0.0, "avg_volume": 0.0, "signal_strength": 0.0,
                 "buffer_len": buf_len, "required_periods": required,
                 "warming_up": True, "active_mode": "aquecendo",
                 "selected_mode": selected_mode,
             }
 
-        price    = float(self.prices[-1])
-        ema9     = float(self.ema_fast[-1])
-        ema21    = float(self.ema_slow[-1])
-        prev_e9  = float(self.ema_fast[-2]) if len(self.ema_fast) > 1 else ema9
-        prev_e21 = float(self.ema_slow[-2]) if len(self.ema_slow) > 1 else ema21
-        slope9   = self._slope(self.ema_fast, self.config.slope_lookback)
-        slope21  = self._slope(self.ema_slow,  self.config.slope_lookback)
+        # ── Throttle ─────────────────────────────────────────────────────────
+        # Só reavalia se passou tempo suficiente OU se tem posição aberta
+        # (posição aberta: avalia sempre para não perder stop/saída)
+        now = datetime.utcnow()
+        throttle = self.config.eval_throttle_sec
+        if (
+            not has_position
+            and throttle > 0
+            and self._last_eval_time is not None
+            and self._last_eval_result is not None
+        ):
+            elapsed = (now - self._last_eval_time).total_seconds()
+            if elapsed < throttle:
+                return self._last_eval_result
+
+        # ── Indicadores ───────────────────────────────────────────────────────
+        price  = float(self.prices[-1])
+        e9     = float(self.ema_fast[-1])
+        e21    = float(self.ema_mid[-1])
+        e38    = float(self.ema_slow[-1])
+        pe9    = float(self.ema_fast[-2]) if len(self.ema_fast) > 1 else e9
+        pe21   = float(self.ema_mid[-2])  if len(self.ema_mid)  > 1 else e21
+
+        s9  = self._slope(self.ema_fast, self.config.slope_lookback)
+        s21 = self._slope(self.ema_mid,  self.config.slope_lookback)
+        s38 = self._slope(self.ema_slow, self.config.slope_lookback)
+
         atr      = self.atr_calc.value()
-        dist     = abs(ema9 - ema21)
-        dist_pct = dist / ema21 if ema21 > 0 else 0.0
+        dist     = abs(e9 - e21)
+        dist_pct = dist / e21 if e21 > 0 else 0.0
         atr_gate = (atr * self.config.atr_min_factor) if atr is not None else None
 
-        avg_vol = 0.0
-        if len(self.volumes) >= 20:
-            avg_vol = sum(list(self.volumes)[-20:]) / 20
+        avg_vol = (sum(list(self.volumes)[-20:]) / 20) if len(self.volumes) >= 20 else 0.0
         cur_vol = float(self.volumes[-1]) if self.volumes else 0.0
 
+        # ── CAMADA 1: Regime ─────────────────────────────────────────────────
         if selected_mode == "tendencia":
-            regime = "tendencia"
+            regime = "tendencia_forte"
         elif selected_mode == "lateral":
             regime = "lateral"
         else:
-            regime = self._detect_regime(price)
+            regime = self._detect_regime(price, e9, e21, e38)
 
         base = {
-            "price": price, "ema9": ema9, "ema21": ema21,
-            "ema9_prev": prev_e9, "ema21_prev": prev_e21,
-            "slope_ema9": slope9, "slope_ema21": slope21,
+            "price": price, "ema9": e9, "ema21": e21, "ema38": e38,
+            "ema9_prev": pe9, "ema21_prev": pe21,
+            "slope_ema9": s9, "slope_ema21": s21, "slope_ema38": s38,
             "atr": atr, "atr_gate": atr_gate,
             "distancia_absoluta": dist, "distancia_percentual": dist_pct,
             "bb_upper": self._bb_upper, "bb_lower": self._bb_lower, "bb_mid": self._bb_mid,
             "volume": cur_vol, "avg_volume": avg_vol,
             "selected_mode": selected_mode, "active_mode": regime,
-            "buffer_len": buf_len, "required_periods": required, "warming_up": False,
+            "buffer_len": buf_len, "required_periods": required,
+            "warming_up": False, "signal_strength": 0.0,
         }
 
-        if regime == "tendencia":
-            return self._evaluate_trend(has_position, base)
+        # ── CAMADA 2: Roteamento ──────────────────────────────────────────────
+        if regime in ("tendencia_forte", "tendencia_fraca"):
+            result = self._evaluate_trend(has_position, base, regime)
+        elif self.config.block_when_lateral and not has_position:
+            result = {"signal": "none", "reason": "mercado_lateral_bloqueado", **base}
+        elif self.config.lateral_bb_entry:
+            result = self._evaluate_lateral_scalping(has_position, base)
+        elif has_position:
+            result = self._evaluate_exit_only(has_position, base)
         else:
-            if self.config.lateral_bb_entry:
-                return self._evaluate_lateral_scalping(has_position, base)
-            if has_position:
-                return self._evaluate_exit_only(has_position, base)
-            return {"signal": "none", "reason": "mercado_lateral_sem_operacao", **base}
+            result = {"signal": "none", "reason": "mercado_lateral_sem_operacao", **base}
 
-    # ── Tendência ────────────────────────────────────────────────────────────
-    def _evaluate_trend(self, has_position: bool, base: dict) -> dict:
-        ema9     = base["ema9"]
-        ema21    = base["ema21"]
-        prev_e9  = base["ema9_prev"]
-        prev_e21 = base["ema21_prev"]
-        slope9   = base["slope_ema9"]
+        # ── CAMADA 4: Força do sinal ──────────────────────────────────────────
+        result["signal_strength"] = self._calc_signal_strength(result, base)
+
+        self._last_eval_time   = now
+        self._last_eval_result = result
+        return result
+
+    # ─── CAMADA 2A: Tendência — confirmação em cascata ────────────────────────
+    def _evaluate_trend(self, has_position: bool, base: dict, regime: str) -> dict:
+        """
+        CAMADA 3 — Filtros de qualidade:
+          1. Cascata: EMA9 > EMA21 > EMA38  (ou inverso para baixa)
+          2. Distância EMA9/EMA21 > min_dist_pct
+          3. Slope EMA9 positivo e consistente
+          4. ATR gate
+          5. Volume mínimo
+
+        ENTRADA (sem posição):
+          Padrão:    exige crossover EMA9/EMA21
+          Agressivo: aceita EMA9 > EMA21 sem crossover recente
+        """
+        e9   = base["ema9"]
+        e21  = base["ema21"]
+        e38  = base["ema38"]
+        pe9  = base["ema9_prev"]
+        pe21 = base["ema21_prev"]
+        s9   = base["slope_ema9"]
         dist_pct = base["distancia_percentual"]
+        dist     = base["distancia_absoluta"]
         atr      = base["atr"]
         atr_gate = base["atr_gate"]
-        dist     = base["distancia_absoluta"]
         avg_vol  = base["avg_volume"]
         cur_vol  = base["volume"]
 
-        bullish_cross = (prev_e9 <= prev_e21) and (ema9 > ema21)
-        bearish_cross = (prev_e9 >= prev_e21) and (ema9 < ema21)
+        bullish_cross = (pe9 <= pe21) and (e9 > e21)
+        bearish_cross = (pe9 >= pe21) and (e9 < e21)
 
-        slope_ok = slope9 >= self.config.min_slope
+        # ── Filtros de qualidade (CAMADA 3) ───────────────────────────────
         dist_ok  = dist_pct >= self.config.min_dist_pct
+        slope_ok = s9 > 0
         atr_ok   = (atr_gate is None) or (atr is None) or (dist >= atr_gate)
         vol_ok   = (avg_vol <= 0) or (cur_vol >= avg_vol * 0.8)
 
-        # Saída
+        # Cascata: EMA9 > EMA21 > EMA38 (alta) ou EMA9 < EMA21 < EMA38 (baixa)
+        cascade_bull = (e9 > e21) and (e21 > e38)
+        cascade_bear = (e9 < e21) and (e21 < e38)
+
+        # ── SAÍDA (posição aberta) ─────────────────────────────────────────
         if has_position:
             if bearish_cross:
-                return {"signal": "sell", "reason": "crossover_baixa", **base}
-            if slope9 < -abs(self.config.min_slope) and ema9 < ema21:
-                return {"signal": "sell", "reason": "slope_negativo_abaixo_ema21", **base}
+                return {"signal": "sell", "reason": "crossover_baixa_ema9_ema21", **base}
+            if cascade_bear:
+                return {"signal": "sell", "reason": "cascata_baixa_ema9_ema21_ema38", **base}
+            if s9 < 0 and e9 < e21 and e21 < e38:
+                return {"signal": "sell", "reason": "slope_negativo_cascata_baixa", **base}
             return {"signal": "none", "reason": "posicao_mantida", **base}
 
-        # Modo agressivo: sem crossover
-        if self.config.aggressive_no_crossover:
-            if ema9 > ema21 and slope_ok and dist_ok:
-                return {"signal": "buy", "reason": "tendencia_agressiva_sem_crossover", **base}
-            reason = "ema9_abaixo_ema21" if ema9 <= ema21 else \
-                     f"slope_negativo ({slope9:.4f})" if not slope_ok else \
-                     f"dist_insuficiente ({dist_pct*100:.5f}%)"
-            return {"signal": "none", "reason": reason, **base}
-
-        # Entrada padrão: exige crossover
-        if not bullish_cross:
-            reason = "sem_crossover"
-            if ema9 > ema21:
-                reason = "tendencia_ativa_sem_cross_recente"
-            return {"signal": "none", "reason": reason, **base}
-
-        if not slope_ok:
-            return {"signal": "none", "reason": f"slope_insuficiente ({slope9:.4f})", **base}
+        # ── ENTRADA (sem posição) ─────────────────────────────────────────
+        # Filtros básicos primeiro
         if not dist_ok:
-            return {"signal": "none", "reason": f"distancia_insuficiente ({dist_pct*100:.5f}%)", **base}
+            return {
+                "signal": "none",
+                "reason": f"dist_insuficiente ({dist_pct*100:.5f}% < {self.config.min_dist_pct*100:.3f}%)",
+                **base,
+            }
+        if not slope_ok:
+            return {"signal": "none", "reason": f"slope_negativo ({s9:.4f})", **base}
         if not atr_ok:
             return {"signal": "none", "reason": "atr_gate_nao_atingido", **base}
         if not vol_ok:
-            return {"signal": "none", "reason": f"volume_insuficiente", **base}
+            return {"signal": "none", "reason": "volume_insuficiente", **base}
 
-        return {"signal": "buy", "reason": "crossover_alta_confirmado", **base}
+        # Verificar cascata (ESSENCIAL — filtra ruído macro)
+        if not cascade_bull:
+            return {
+                "signal": "none",
+                "reason": f"cascata_nao_alinhada (E9={e9:.0f} E21={e21:.0f} E38={e38:.0f})",
+                **base,
+            }
 
-    # ── Lateral: scalping Bollinger ──────────────────────────────────────────
+        # Modo agressivo: aceita EMA9 > EMA21 sem crossover
+        if self.config.aggressive_no_crossover:
+            return {"signal": "buy", "reason": "tendencia_cascata_agressiva", **base}
+
+        # Modo padrão: exige crossover
+        if bullish_cross:
+            return {"signal": "buy", "reason": "crossover_alta_cascata_confirmado", **base}
+
+        return {"signal": "none", "reason": "cascata_ok_aguardando_crossover", **base}
+
+    # ─── CAMADA 2B: Lateral — scalping Bollinger ──────────────────────────────
     def _evaluate_lateral_scalping(self, has_position: bool, base: dict) -> dict:
         """
         Compra na banda inferior, vende na banda superior ou na média.
-        Ideal para mercado oscilante sem direção clara.
+        NÃO usa EMA cruzamento — usa reversão à média.
         """
         price    = base["price"]
         bb_upper = base["bb_upper"]
@@ -291,11 +405,11 @@ class StrategyEngine:
         if bb_upper is None or bb_lower is None or bb_mid is None:
             return {"signal": "none", "reason": "bollinger_sem_dados", **base}
 
-        band_width = bb_upper - bb_lower
-        if band_width <= 0:
+        bw = bb_upper - bb_lower
+        if bw <= 0:
             return {"signal": "none", "reason": "bollinger_banda_zero", **base}
 
-        pos_rel = (price - bb_lower) / band_width  # 0 = lower, 1 = upper
+        pos_rel = (price - bb_lower) / bw  # 0 = fundo, 1 = topo
 
         if has_position:
             if price >= bb_upper:
@@ -309,51 +423,104 @@ class StrategyEngine:
 
         return {"signal": "none", "reason": f"lateral_fora_entrada (pos={pos_rel:.2f})", **base}
 
-    # ── Somente saída ────────────────────────────────────────────────────────
+    # ─── Somente saída ────────────────────────────────────────────────────────
     def _evaluate_exit_only(self, has_position: bool, base: dict) -> dict:
-        ema9    = base["ema9"]
-        ema21   = base["ema21"]
-        prev_e9 = base["ema9_prev"]
-        prev_e21= base["ema21_prev"]
         if has_position:
-            if (prev_e9 >= prev_e21) and (ema9 < ema21):
-                return {"signal": "sell", "reason": "crossover_baixa_lateral", **base}
-            if ema9 < ema21 and base["slope_ema9"] < 0:
-                return {"signal": "sell", "reason": "saida_mercado_lateral", **base}
-        return {"signal": "none", "reason": "mercado_lateral_aguardando", **base}
+            e9, e21 = base["ema9"], base["ema21"]
+            pe9, pe21 = base["ema9_prev"], base["ema21_prev"]
+            if (pe9 >= pe21) and (e9 < e21):
+                return {"signal": "sell", "reason": "crossover_baixa_exit_only", **base}
+            if e9 < e21 and base["slope_ema9"] < 0:
+                return {"signal": "sell", "reason": "slope_negativo_exit_only", **base}
+        return {"signal": "none", "reason": "lateral_sem_sinal_saida", **base}
 
-    # ── Helpers públicos ─────────────────────────────────────────────────────
+    # ─── CAMADA 4: Força do sinal ─────────────────────────────────────────────
+    def _calc_signal_strength(self, result: dict, base: dict) -> float:
+        """
+        Retorna 0.0–1.0 baseado em quantas camadas confirmam.
+        Usado pelo TradingEngine para position sizing inteligente.
+
+        Forte (0.7–1.0): cascata alinhada + dist alta + slope forte + ATR ok
+        Médio (0.4–0.7): a maioria confirmada
+        Fraco (0.0–0.4): apenas 1-2 confirmações
+        """
+        if result.get("signal") == "none":
+            return 0.0
+
+        e9   = base["ema9"]
+        e21  = base["ema21"]
+        e38  = base["ema38"]
+        s9   = base["slope_ema9"]
+        s38  = base["slope_ema38"]
+        dist = base["distancia_percentual"]
+        atr  = base["atr"] or 0.0
+        price= base["price"] or 1.0
+
+        checks = [
+            e9 > e21 > e38,                              # cascata alta
+            s9 > 0,                                       # slope9 positivo
+            s38 > 0,                                      # slope38 positivo (macro)
+            dist >= self.config.min_dist_pct * 2,         # dist dobrada = mais forte
+            (atr / price) > 0.0001,                       # volatilidade real
+        ]
+        score = sum(checks) / len(checks)
+
+        # Bonus por distância percentual
+        dist_bonus = min(0.2, dist * 100)
+        return min(1.0, score + dist_bonus)
+
+    # ─── Helpers públicos ─────────────────────────────────────────────────────
     def set_aggressive_mode(self, enabled: bool) -> None:
+        """Liga modo agressivo (entra sem crossover se cascata alinhada)."""
         self.config.aggressive_no_crossover = bool(enabled)
 
     def set_lateral_scalping(self, enabled: bool) -> None:
+        """Liga scalping por Bollinger em mercado lateral."""
         self.config.lateral_bb_entry = bool(enabled)
         self.config.lateral_bb_exit  = bool(enabled)
 
+    def set_block_lateral(self, enabled: bool) -> None:
+        """Se True, não opera em lateral (ignora scalping)."""
+        self.config.block_when_lateral = bool(enabled)
+
     def set_regime_threshold(self, threshold: float) -> None:
-        """
-        Ajusta sensibilidade do detector de regime.
-        Valores úteis para ticks 1-2s BTC/BRL:
-          0.000002 → muito sensível (quase sempre tendência)
-          0.000005 → padrão
-          0.00001  → conservador (fica lateral na maioria do tempo)
-        """
+        """Sensibilidade do detector. Menor = detecta tendência mais fácil."""
         self.config.regime_slope_threshold = max(0.0, float(threshold))
 
+    def set_eval_throttle(self, seconds: float) -> None:
+        """Intervalo mínimo entre avaliações (evita overtrading em ticks)."""
+        self.config.eval_throttle_sec = max(0.0, float(seconds))
+
+    def set_min_dist_pct(self, pct: float) -> None:
+        """Distância mínima EMA9/EMA21 para aceitar sinal."""
+        self.config.min_dist_pct = max(0.0, float(pct))
+
     def get_debug_info(self) -> dict:
+        """Snapshot completo para debug e relatórios."""
         price = float(self.prices[-1]) if self.prices else 0.0
+        e9    = float(self.ema_fast[-1]) if self.ema_fast else 0.0
+        e21   = float(self.ema_mid[-1])  if self.ema_mid  else 0.0
+        e38   = float(self.ema_slow[-1]) if self.ema_slow else 0.0
         return {
-            "buffer_len": len(self.prices),
-            "ema9":  float(self.ema_fast[-1]) if self.ema_fast else 0.0,
-            "ema21": float(self.ema_slow[-1]) if self.ema_slow else 0.0,
-            "slope9":  self._slope(self.ema_fast, self.config.slope_lookback),
-            "slope21": self._slope(self.ema_slow,  self.config.slope_lookback),
-            "atr":     self.atr_calc.value(),
-            "bb_upper": self._bb_upper,
-            "bb_lower": self._bb_lower,
-            "bb_mid":   self._bb_mid,
-            "regime":   self._detect_regime(price) if price > 0 else "N/A",
-            "regime_threshold": self.config.regime_slope_threshold,
+            "buffer_len":   len(self.prices),
+            "ema9":         e9,
+            "ema21":        e21,
+            "ema38":        e38,
+            "slope9":       self._slope(self.ema_fast, self.config.slope_lookback),
+            "slope21":      self._slope(self.ema_mid,  self.config.slope_lookback),
+            "slope38":      self._slope(self.ema_slow, self.config.slope_lookback),
+            "dist_pct":     abs(e9 - e21) / e21 if e21 > 0 else 0.0,
+            "atr":          self.atr_calc.value(),
+            "bb_upper":     self._bb_upper,
+            "bb_lower":     self._bb_lower,
+            "bb_mid":       self._bb_mid,
+            "regime":       self._detect_regime(price, e9, e21, e38) if price > 0 else "N/A",
+            "regime_threshold":        self.config.regime_slope_threshold,
+            "min_dist_pct":            self.config.min_dist_pct,
+            "eval_throttle_sec":       self.config.eval_throttle_sec,
             "aggressive_no_crossover": self.config.aggressive_no_crossover,
-            "lateral_scalping": self.config.lateral_bb_entry,
+            "lateral_scalping":        self.config.lateral_bb_entry,
+            "block_when_lateral":      self.config.block_when_lateral,
+            "cascade_bull":            (e9 > e21 > e38) if e38 > 0 else False,
+            "cascade_bear":            (e9 < e21 < e38) if e38 > 0 else False,
         }
