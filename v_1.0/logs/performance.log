@@ -26,3 +26,6 @@
 2026-04-28 13:42:31,962 | TRADE_CLOSE | lucro=-0.1260 | lucro_pct=-0.4203 | saldo_final=299.5869
 2026-04-28 13:44:22,994 | TRADE_CLOSE | lucro=-0.1377 | lucro_pct=-0.4598 | saldo_final=299.4492
 >>>>>>> bcb2276 ( nova strategy engine com filtro de mercado)
+2026-05-01 17:29:13,663 | TRADE_CLOSE | lucro=-0.3168 | lucro_pct=-0.7040 | saldo_final=299.6832
+2026-05-02 18:32:08,507 | TRADE_CLOSE | lucro=-0.0922 | lucro_pct=-0.2050 | saldo_final=299.5910
+2026-05-02 18:41:38,943 | TRADE_CLOSE | lucro=-0.0432 | lucro_pct=-0.0961 | saldo_final=299.5479
