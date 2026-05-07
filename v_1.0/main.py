@@ -14,6 +14,7 @@ if __name__ == "__main__":
         except Exception as exc:
             print("Falha ao iniciar cliente Binance:", exc)
 
+
         market_data = MarketDataClient(client=client)
         market_data.start()
 

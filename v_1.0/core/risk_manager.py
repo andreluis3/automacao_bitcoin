@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-
-@dataclass
 class RiskConfig:
     risk_per_trade_pct_base: float = 2.5
-    risk_per_trade_pct_aggressive: float = 4.0
-    risk_per_trade_pct_defensive: float = 1.25
-    max_exposure_pct: float = 40.0
-    min_order_value_brl: float = 35.0
+    risk_per_trade_pct_aggressive: float = 5.0   # era 4.0
+    risk_per_trade_pct_defensive: float = 1.5    # era 1.25
+    max_exposure_pct: float = 65.0               # era 40.0 — esse é o teto real
+    min_order_value_brl: float = 20.0            # era 35.0
+
 
 
 def calculate_position_size(capital: float, risk_percent: float) -> float:
@@ -76,15 +75,16 @@ class Position:
 
 
 class RiskManager:
-    def __init__(self, risk_config: Optional[RiskConfig] = None):
+    def __init__(self, risk_config=None):
         self.config = risk_config or RiskConfig()
-        self.initial_alloc_pct = 0.10
+        self.initial_alloc_pct = 0.40            # era 0.10 — esse é o vilão principal
         self.scale_step_pct = 0.10
-        self.max_position_size = 0.30
+        self.max_position_size = 0.65            # era 0.30
         self.position_alloc_pct = self.initial_alloc_pct
-        self.trailing_activation_pct = 1.0
-        self.trailing_distance_pct = 0.7
-
+        self.trailing_activation_pct = 0.5      # era 1.0 — ativa trailing mais cedo
+        self.trailing_distance_pct = 0.5        # era 0.7 — trailing mais apertado
+        
+        
     def build_position_plan(
         self,
         equity_brl: float,

@@ -1,0 +1,50 @@
+============================================================
+  RELATÓRIO DE SESSÃO — Automação Bitcoin
+  Gerado em: 2026-05-04 06:03:28
+============================================================
+
+  MODO BOT      : SIMULANDO
+  ESTRATÉGIA    : AUTO (ativo: LATERAL)
+  PERFIL        : Agressivo
+  MODO AGRESSIVO: True
+  SCALPING LAT. : True
+  REGIME THRESH : 3e-06
+
+  ── INDICADORES ───────────────────────────────────
+  BTC/BRL       : R$ 395,886.00
+  EMA9          : 395912.21
+  EMA21         : 395941.73
+  Slope EMA9    : -73.7731
+  ATR           : 5.083299945809283
+  BB Upper      : 396047.6515138991
+  BB Lower      : 395864.3484861009
+  Regime atual  : LATERAL
+
+  ── PERFORMANCE ───────────────────────────────────
+  Equity        : R$ 299.8467
+  Lucro hoje    : R$ -0.1533
+  Drawdown máx. : 0.41%
+  Total trades  : 8
+  Win rate      : 12.5%
+  Profit factor : 0.87
+  Sharpe simpl. : 0.0000
+
+  ── CONFLUÊNCIA ATUAL ─────────────────────────────
+  ✖ ema_above_sma
+  ✖ sma_slope_up
+  ✖ cascata_bull
+  ✖ distancia_ok
+  ✖ ema38_slope_ok
+  → Aguardando confluencia
+
+  ── ÚLTIMOS TRADES ────────────────────────────────
+  2026-05-03T17:49:14 | SELL | Entrada R$391,192.00 → Saída R$391,151.00 | PnL R$-0.0947 | SIGNAL_EXIT
+  2026-05-03T17:56:29 | SELL | Entrada R$392,790.67 → Saída R$390,487.38 | PnL R$-0.3532 | SIGNAL_EXIT
+  2026-05-03T18:04:55 | SELL | Entrada R$392,134.59 → Saída R$390,839.00 | PnL R$-0.2380 | SIGNAL_EXIT
+  2026-05-03T18:09:01 | SELL | Entrada R$391,122.83 → Saída R$390,652.00 | PnL R$-0.1437 | SIGNAL_EXIT
+  2026-05-03T18:15:45 | SELL | Entrada R$390,693.00 → Saída R$390,646.00 | PnL R$-0.0951 | SIGNAL_EXIT
+  2026-05-03T18:49:35 | SELL | Entrada R$393,170.61 → Saída R$392,741.12 | PnL R$-0.1386 | SIGNAL_EXIT
+  2026-05-03T19:24:10 | SELL | Entrada R$385,756.82 → Saída R$385,370.86 | PnL R$-0.1344 | SIGNAL_EXIT
+  2026-05-04T08:58:08 | SELL | Entrada R$386,137.50 → Saída R$395,926.00 | PnL +R$1.0443 | TP
+
+============================================================

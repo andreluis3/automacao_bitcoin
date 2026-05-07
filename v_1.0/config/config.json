@@ -1,22 +1,16 @@
 {
   "capital_total": 300,
-  "risk_per_trade": 0.02,
+  "risk_per_trade": 0.05,
   "breakout_risk": 0.3,
   "binance_fee": 0.001,
   "symbol": "BTCUSDT",
   "modo": "simulacao",
   "trading_mode": "auto",
   "drawdown": 12.0,
-  "position_scaling": [
-    0.02,
-    0.02,
-    0.03
-  ],
-  "max_position_size": 0.3,
+  "position_scaling": [0.05, 0.05, 0.10],
+  "max_position_size": 0.65,
   "perfil": "Agressivo",
   "acumular_saldo": true,
-  "saldo_inicial": 300.0,
-  "valor_trade": 2.0,
-  "stop": 1.2,
-  "take": 2.5
+  "stop": 1.5,
+  "take": 4.0
 }

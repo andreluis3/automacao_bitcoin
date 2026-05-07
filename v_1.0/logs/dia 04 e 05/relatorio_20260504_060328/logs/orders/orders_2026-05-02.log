@@ -14,15 +14,3 @@
 2026-05-03 16:24:10 | [ORDER] SELL | BTC/BRL | Preço=R$385,370.86 | Qtd=0.00011612 BTC | Valor=R$44.71 | Taxa=R$0.0448 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
 2026-05-04 05:58:06 | [ORDER] BUY | BTC/BRL | Preço=R$386,137.50 | Qtd=0.00011596 BTC | Valor=R$44.82 | Taxa=R$0.0448 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
 2026-05-04 05:58:08 | [ORDER] SELL | BTC/BRL | Preço=R$395,926.00 | Qtd=0.00011596 BTC | Valor=R$45.86 | Taxa=R$0.0459 | Motivo=TP | Status=EXECUTADA
-2026-05-04 14:06:56 | [ORDER] BUY | BTC/BRL | Preço=R$399,001.17 | Qtd=0.00011261 BTC | Valor=R$44.98 | Taxa=R$0.0450 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:07:24 | [ORDER] SELL | BTC/BRL | Preço=R$399,945.79 | Qtd=0.00011261 BTC | Valor=R$44.99 | Taxa=R$0.0450 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
-2026-05-04 14:11:17 | [ORDER] BUY | BTC/BRL | Preço=R$396,761.99 | Qtd=0.00011325 BTC | Valor=R$44.98 | Taxa=R$0.0450 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:11:43 | [ORDER] SELL | BTC/BRL | Preço=R$396,116.48 | Qtd=0.00011325 BTC | Valor=R$44.82 | Taxa=R$0.0449 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
-2026-05-04 14:13:36 | [ORDER] BUY | BTC/BRL | Preço=R$395,424.95 | Qtd=0.00011357 BTC | Valor=R$44.96 | Taxa=R$0.0450 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:13:58 | [ORDER] SELL | BTC/BRL | Preço=R$394,762.88 | Qtd=0.00011357 BTC | Valor=R$44.79 | Taxa=R$0.0448 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
-2026-05-04 14:25:55 | [ORDER] BUY | BTC/BRL | Preço=R$394,173.96 | Qtd=0.00011387 BTC | Valor=R$44.93 | Taxa=R$0.0449 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:26:18 | [ORDER] SELL | BTC/BRL | Preço=R$392,188.61 | Qtd=0.00011387 BTC | Valor=R$44.61 | Taxa=R$0.0447 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
-2026-05-04 14:28:20 | [ORDER] BUY | BTC/BRL | Preço=R$392,776.19 | Qtd=0.00011416 BTC | Valor=R$44.88 | Taxa=R$0.0449 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:28:33 | [ORDER] SELL | BTC/BRL | Preço=R$390,885.18 | Qtd=0.00011416 BTC | Valor=R$44.58 | Taxa=R$0.0446 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
-2026-05-04 14:30:46 | [ORDER] BUY | BTC/BRL | Preço=R$393,349.26 | Qtd=0.00011387 BTC | Valor=R$44.84 | Taxa=R$0.0448 | Motivo=tendencia_cascata_agressiva | Status=EXECUTADA
-2026-05-04 14:30:49 | [ORDER] SELL | BTC/BRL | Preço=R$392,685.84 | Qtd=0.00011387 BTC | Valor=R$44.67 | Taxa=R$0.0447 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
