@@ -10,11 +10,12 @@
   "position_scaling": [
     0.05,
     0.05,
-    0.10
+    0.1
   ],
   "max_position_size": 0.65,
   "perfil": "Agressivo",
   "acumular_saldo": true,
   "stop": 1.5,
-  "take": 4.0
+  "take": 4.0,
+  "saldo_inicial": 300.0
 }
