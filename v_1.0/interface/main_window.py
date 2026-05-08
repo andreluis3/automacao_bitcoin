@@ -928,6 +928,10 @@ class TradingApp(ctk.CTk):
         self.controller.shutdown()
         self.destroy()
 
+    def shutdown(self) -> None:
+        """Alias para compatibilidade com chamadas externas."""
+        self._on_close()
+
 
 # Alias para compatibilidade com imports existentes
 MainWindow = TradingApp

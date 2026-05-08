@@ -3,8 +3,6 @@ from api.market_data import MarketDataClient
 from interface.main_window import MainWindow
 import sys
 
-import sys
-
 if __name__ == "__main__":
     try:
         client = None
@@ -22,15 +20,28 @@ if __name__ == "__main__":
 
         def on_close():
             try:
-                app.shutdown()
+                # Chamada segura ao método de cleanup
+                on_close_method = getattr(app, '_on_close', None)
+                if callable(on_close_method):
+                    on_close_method()
+                else:
+                    # Fallback: tentar shutdown do controller diretamente
+                    controller = getattr(app, 'controller', None)
+                    if controller and hasattr(controller, 'shutdown'):
+                        controller.shutdown()
             except Exception as e:
                 print("Erro no shutdown:", e)
+            
             try:
                 market_data.stop()
             except Exception:
                 pass
 
-            app.destroy()  # destroy já encerra a janela
+            try:
+                app.destroy()
+            except Exception:
+                pass
+            
             sys.exit()
 
         app.protocol("WM_DELETE_WINDOW", on_close)
