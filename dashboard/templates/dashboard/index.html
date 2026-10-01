@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automação Bitcoin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-basic-2.27.0.min.js"></script>
+<style>
+:root{--bg:#090d16;--card:#121824;--line:#1e293b;--tx:#e2e8f0;--mut:#64748b;--g:#00e676;--r:#ff5252;--b:#2563eb;--a:#f59e0b;--c:#29b6f6;
+--mono:'JetBrains Mono',ui-monospace,monospace}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:13px/1.45 Inter,system-ui,sans-serif;min-height:100vh}
+.mono,button,select,table{font-family:var(--mono)}
+header{position:sticky;top:0;z-index:9;background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.brand{font:700 13px var(--mono);letter-spacing:.06em;display:flex;gap:8px;align-items:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mut);display:inline-block}
+.dot.on{background:var(--g);box-shadow:0 0 8px var(--g)}.dot.off{background:var(--r)}
+#price{font:600 20px var(--mono)}.up{color:var(--g)}.dn{color:var(--r)}.warn{color:var(--a)}
+.stats{margin-left:auto;display:flex;gap:18px;font:12px var(--mono);flex-wrap:wrap}
+.stats small{display:block;color:var(--mut);font-size:10px;letter-spacing:.08em}
+.tabs{display:flex;justify-content:center;padding:10px;border-bottom:1px solid var(--line);background:var(--card)}
+.tabs div{display:flex;gap:4px;background:var(--bg);padding:4px;border:1px solid var(--line);border-radius:8px}
+.tabs button{background:none;border:0;color:var(--mut);padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;transition:.15s}
+.tabs button.active{background:var(--b);color:#fff;box-shadow:0 0 12px #2563eb66}
+main{max-width:1920px;margin:auto;padding:12px}
+.screen{display:none;gap:12px;flex-direction:column}.screen.active{display:flex}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.card h3{font:600 12px var(--mono);color:#cbd5e1;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:8px}
+.grid{display:grid;gap:12px}.g-trade{grid-template-columns:3fr 1fr}.g-2{grid-template-columns:1fr 1fr}.g-perf{grid-template-columns:2fr 1fr}
+.kpis{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+.kpi small{color:var(--mut);font:10px var(--mono);display:block}.kpi b{font:700 18px var(--mono)}
+.chart{width:100%;height:420px}.chart.s{height:320px}
+.panel{display:flex;flex-direction:column;gap:12px;font-family:var(--mono)}
+.badge{text-align:center;background:#090d16cc;border:1px solid var(--line);border-radius:6px;padding:10px;font-weight:700;letter-spacing:.06em;font-size:12px}
+label{font-size:11px;color:var(--mut);display:block;margin-bottom:4px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;background:var(--bg);padding:4px;border:1px solid var(--line);border-radius:6px}
+.seg button{background:none;border:0;color:var(--mut);padding:6px 4px;border-radius:4px;cursor:pointer;font-size:11px}
+.seg button.on{background:var(--b);color:#fff;font-weight:700}.seg button:disabled{opacity:.45;cursor:not-allowed}
+select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);padding:7px;border-radius:6px}
+.btn{width:100%;border:0;color:#fff;font-weight:700;padding:11px;border-radius:6px;cursor:pointer;font-size:12px;letter-spacing:.06em}
+.btn:disabled{opacity:.4;cursor:not-allowed}.start{background:#059669}.stop{background:#b91c1c}.ghost{background:#1e293b;color:#cbd5e1;font-weight:500;padding:8px;text-align:center;text-decoration:none;display:block;border:1px solid var(--line);border-radius:6px}
+.row{display:flex;justify-content:space-between;font-size:12px}.row span:first-child{color:var(--mut)}
+.sw{display:flex;gap:8px;align-items:center;font-size:12px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:11px}th{color:var(--mut);text-align:left;font-weight:500;padding:4px 6px 6px;border-bottom:1px solid var(--line)}
+td{padding:4px 6px;border-bottom:1px solid #1e293b80;white-space:nowrap}
+.scroll{overflow:auto;max-height:240px}
+#console{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;font:11px/1.6 var(--mono);height:150px;overflow-y:auto;color:#94a3b8}
+.t{color:var(--mut)}.FEED{color:var(--c)}.SISTEMA,.SYSTEM{color:var(--g)}.STRATEGY{color:var(--a)}.ERR{color:var(--r)}
+.det h4{color:var(--c);font:700 11px var(--mono);margin:8px 0 4px}.det div{display:grid;grid-template-columns:1fr 1fr;font:11px var(--mono);gap:2px 8px}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:#222f43;border-radius:4px}
+@media(max-width:1000px){.g-trade,.g-2,.g-perf{grid-template-columns:1fr}.chart{height:320px}.stats{margin-left:0}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="online"></span>AUTOMAÇÃO BITCOIN</div>
+  <div><span id="price">—</span> <span id="var" class="mono"></span></div>
+  <span class="mono" id="hmode" style="font-size:11px"></span>
+  <div class="stats">
+    <div><small>SALDO</small><span id="hSaldo">—</span></div>
+    <div><small>DRAWDOWN</small><span id="hDd">—</span></div>
+    <div><small>ESTRATÉGIA</small><span id="hStrat">—</span></div>
+    <div><small>TAXAS</small><span id="hFees">—</span></div>
+    <div><small>POSIÇÃO</small><span id="hPos">—</span></div>
+  </div>
+</header>
+<nav class="tabs"><div>
+  <button class="active" data-tab="trading">Trading</button>
+  <button data-tab="performance">Performance</button>
+  <button data-tab="mensal">Registro Mensal</button>
+</div></nav>
+
+<main>
+<!-- TRADING -->
+<section class="screen active" id="s-trading">
+  <div class="grid g-trade">
+    <div class="card"><h3>BTC/BRL · feed em tempo real <span class="t">(EMA 9 · EMA 21)</span></h3><div id="c-price" class="chart"></div></div>
+    <div class="card panel">
+      <h3 style="margin:0">Configuração</h3>
+      <div class="badge" id="badge">PARADO</div>
+      <div><label>Modo</label><div class="seg" id="g-mode"><button data-v="simulacao">SIMULAÇÃO</button><button data-v="real">REAL</button></div></div>
+      <div><label>Modo de trading</label><div class="seg" id="g-tm"><button data-v="tendencia">TENDÊNCIA</button><button data-v="lateral">LATERAL</button><button data-v="auto">AUTO</button></div></div>
+      <div><label>Perfil de risco</label><select id="profile"><option>Agressivo</option><option>Conservador</option></select></div>
+      <button class="btn start" id="bStart">▶ INICIAR</button>
+      <button class="btn stop" id="bStop">■ PARAR</button>
+      <a class="ghost" href="{% url 'dashboard:download_logs' %}">⬇ Download Logs</a>
+      <label class="sw"><input type="checkbox" id="acc"> Ativar acumulação</label>
+      <div class="card" style="padding:10px;background:#090d16">
+        <div class="row"><span>Lucro Hoje</span><b id="pLucro">—</b></div>
+        <div class="row" style="margin-top:6px"><span>Equity Atual</span><b id="pEq">—</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="card"><h3>Console de logs</h3><div id="console"></div></div>
+</section>
+
+<!-- PERFORMANCE -->
+<section class="screen" id="s-performance">
+  <div class="kpis">
+    <div class="card kpi"><small>Total Trades</small><b id="kTrades">0</b></div>
+    <div class="card kpi"><small>Win Rate</small><b id="kWin">0%</b></div>
+    <div class="card kpi"><small>Lucro Líquido</small><b id="kLucro">0</b></div>
+    <div class="card kpi"><small>Drawdown Máx</small><b id="kDd">0%</b></div>
+    <div class="card kpi"><small>Profit Factor</small><b id="kPf">0</b></div>
+    <div class="card kpi"><small>Sharpe</small><b id="kSh">0</b></div>
+    <div class="card kpi"><small>Expectância</small><b id="kEx">0</b></div>
+  </div>
+  <div class="card mono" id="subbar" style="font-size:11px;color:var(--mut)"></div>
+  <div class="grid g-perf">
+    <div class="card"><h3>Equity vs Benchmark</h3><div id="c-eq" class="chart s"></div></div>
+    <div class="card"><h3>Histograma de retornos</h3><div id="c-hist" class="chart s"></div></div>
+  </div>
+  <div class="grid g-2">
+    <div class="card"><h3>Deep Logs</h3><div class="scroll"><table><thead><tr><th>Data</th><th>Tp</th><th>Entrada</th><th>Saída</th><th>Lucro</th><th>Motivo</th></tr></thead><tbody id="tDeep"></tbody></table></div></div>
+    <div class="card"><h3>Quase-Trades</h3><div class="scroll mono" id="tNear" style="font-size:10px;color:#94a3b8"></div></div>
+  </div>
+  <div class="card mono" id="confl" style="font-size:11px;display:flex;flex-wrap:wrap;gap:16px"></div>
+</section>
+
+<!-- MENSAL -->
+<section class="screen" id="s-mensal">
+  <div class="kpis">
+    <div class="card kpi"><small>Lucro do Mês</small><b id="mLucro">0</b></div>
+    <div class="card kpi"><small>Trades Executados</small><b id="mTr">0</b></div>
+    <div class="card kpi"><small>Sessões do Bot</small><b id="mSes">0</b></div>
+    <div class="card kpi"><small>Melhor Dia</small><b id="mBest">0</b></div>
+    <div class="card kpi"><small>Pior Dia</small><b id="mWorst">0</b></div>
+    <div class="card kpi"><small>Média por Trade</small><b id="mAvg">0</b></div>
+  </div>
+  <div class="grid g-2">
+    <div class="card"><h3>Registro Diário</h3><div class="scroll"><table><thead><tr><th>Data</th><th>Trades</th><th>Lucro Dia</th><th>Saldo Final</th><th>Tend.</th></tr></thead><tbody id="tDaily"></tbody></table></div></div>
+    <div class="card det"><h3>Detalhes de Performance</h3><div id="mDet"></div></div>
+  </div>
+  <div class="card"><h3>Lucro acumulado no mês</h3><div id="c-month" class="chart s"></div></div>
+</section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const num = (v, d = 2) => Number(v || 0).toLocaleString('pt-BR', {minimumFractionDigits: d, maximumFractionDigits: d});
+const brl = (v, d = 2) => 'R$ ' + num(v, d);
+const cls = v => v > 0 ? 'up' : v < 0 ? 'dn' : '';
+const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+const URLS = {state: "{% url 'dashboard:state' %}", action: "{% url 'dashboard:action' %}"};
+
+let tab = 'trading', since = 0, last = null, running = false;
+const pts = {t: [], p: [], e9: [], e21: []};   // buffer do gráfico de preço (cliente)
+const MAX_PTS = 300;
+
+/* ---------- Plotly ---------- */
+const base = () => ({paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', showlegend: false,
+  margin: {t: 8, r: 12, l: 60, b: 30}, font: {color: '#94a3b8', family: 'JetBrains Mono, monospace', size: 11},
+  xaxis: {gridcolor: '#1e293b', zerolinecolor: '#1e293b'}, yaxis: {gridcolor: '#1e293b', zerolinecolor: '#1e293b'}});
+const cfg = {responsive: true, displayModeBar: false};
+const line = (x, y, color, name, extra = {}) => ({x, y, type: 'scatter', mode: 'lines', name, line: {color, width: 1.6, ...extra}});
+const plot = (id, data, layout = {}) => Plotly.react(id, data, {...base(), ...layout}, cfg);
+
+/* ---------- Console de logs ---------- */
+function addLog(text) {
+  const box = $('#console'), atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const m = text.match(/^\[(\d\d:\d\d:\d\d)\]\s*(?:\[([A-Z_]+)\])?\s*(.*)$/s) || [];
+  const row = document.createElement('div');
+  const tag = m[2] || (/erro|falha|bloquead/i.test(text) ? 'ERR' : 'SISTEMA');
+  const t = document.createElement('span'); t.className = 't'; t.textContent = `[${m[1] || new Date().toLocaleTimeString('pt-BR')}] `;
+  const g = document.createElement('span'); g.className = tag; g.textContent = `[${tag}] `;
+  row.append(t, g, document.createTextNode(m[3] ?? text));       // textContent: sem risco de XSS
+  box.appendChild(row);
+  while (box.children.length > 400) box.firstChild.remove();
+  if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- Renderização ---------- */
+function render(s) {
+  last = s; running = s.state !== 'parado';
+  const price = s.price_usdt, v = s.variation_pct;
+  $('#price').textContent = '$' + num(price); $('#price').className = cls(v);
+  $('#var').textContent = v ? `${v > 0 ? '▲ +' : '▼ '}${num(v)}%` : ''; $('#var').className = 'mono ' + cls(v);
+  $('#hmode').textContent = String(s.mode).toUpperCase();
+  $('#hSaldo').textContent = brl(s.equity_brl);
+  $('#hDd').textContent = num(s.current_drawdown_pct) + '%';
+  $('#hDd').className = s.current_drawdown_pct > 5 ? 'dn' : s.current_drawdown_pct > 0 ? 'warn' : '';
+  $('#hStrat').textContent = `${s.strategy_mode_selected}/${s.strategy_mode_active}`.toUpperCase();
+  $('#hFees').textContent = brl(s.fees_paid_brl);
+  $('#hPos').textContent = s.position_indicator; $('#hPos').className = s.position_indicator === 'BUY' ? 'up' : '';
+  $('#online').className = 'dot ' + (s.offline ? 'off' : 'on');
+
+  const badge = $('#badge');
+  badge.textContent = s.state === 'real' ? '● REAL RODANDO' : s.state === 'simulando' ? '● SIMULAÇÃO RODANDO' : '○ PARADO';
+  badge.style.color = s.state === 'real' ? 'var(--g)' : s.state === 'simulando' ? 'var(--c)' : 'var(--mut)';
+  $('#bStart').disabled = running; $('#bStop').disabled = !running;
+  setSeg('#g-mode', s.config.modo, running); setSeg('#g-tm', s.config.trading_mode, false);
+  $('#profile').value = s.config.perfil; $('#acc').checked = !!s.config.acumular_saldo;
+  $('#pLucro').textContent = brl(s.lucro_hoje_brl); $('#pLucro').className = cls(s.lucro_hoje_brl);
+  $('#pEq').textContent = brl(s.equity_brl);
+
+  const ctx = s.last_signal_context || {};
+  if (running && s.price_brl > 0) {
+    pts.t.push(new Date()); pts.p.push(s.price_brl);
+    pts.e9.push(ctx.ema9 || null); pts.e21.push(ctx.ema21 || null);
+    if (pts.t.length > MAX_PTS) Object.values(pts).forEach(a => a.shift());
+  }
+  if (tab === 'trading') drawPrice();
+  if (tab === 'performance') drawPerf(s);
+  if (tab === 'mensal') drawMonthly(s);
+}
+function setSeg(sel, val, disabled) {
+  document.querySelectorAll(sel + ' button').forEach(b => { b.classList.toggle('on', b.dataset.v === val); b.disabled = disabled; });
+}
+function drawPrice() {
+  plot('c-price', [line(pts.t, pts.p, '#ffffff', 'BTC'), line(pts.t, pts.e9, '#00e676', 'EMA 9'), line(pts.t, pts.e21, '#ff5252', 'EMA 21')],
+    {showlegend: true, legend: {orientation: 'h', y: 1.08, x: 0}, yaxis: {...base().yaxis, tickformat: ',.0f', autorange: true}});
+}
+function setK(id, text, c = '') { const e = $(id); e.textContent = text; e.className = c; }
+function drawPerf(s) {
+  const lucro = s.lucro_liquido_brl, ex = s.expectancy;
+  setK('#kTrades', s.total_trades); setK('#kWin', num(s.win_rate * 100) + '%', s.win_rate >= .5 ? 'up' : 'warn');
+  setK('#kLucro', brl(lucro), cls(lucro)); setK('#kDd', num(s.drawdown_max_pct) + '%', s.drawdown_max_pct > 5 ? 'dn' : 'up');
+  setK('#kPf', num(s.profit_factor), s.profit_factor >= 1 ? 'up' : 'dn'); setK('#kSh', num(s.sharpe), cls(s.sharpe));
+  setK('#kEx', brl(ex, 4), cls(ex));
+  $('#subbar').textContent = `Avg Gain: ${brl(s.avg_gain, 4)} | Avg Loss: ${brl(s.avg_loss, 4)} | Expectância: ${brl(ex, 4)} | Cross: ${s.total_cross} | Filtrados: ${s.cross_filtrados} | Executados: ${s.cross_executados}`;
+
+  const eq = s.equity_history, bm = s.benchmark_history;
+  if (eq.length) {
+    const bn = bm.map(p => p / bm[0] * eq[0]), x = eq.map((_, i) => i);
+    plot('c-eq', [line(x, eq, '#00e676', 'Equity', {width: 2}), line(x, bn, '#64748b', 'Benchmark BTC', {width: 1, dash: 'dash'})],
+      {showlegend: true, legend: {orientation: 'h', y: 1.1}});
+  }
+  const rets = s.trade_history.map(t => t.lucro);
+  plot('c-hist', [{x: rets, type: 'histogram', marker: {color: '#29b6f6'}}], {margin: {t: 8, r: 10, l: 40, b: 30}});
+
+  $('#tDeep').replaceChildren(...[...s.trade_history].reverse().map(t => row([
+    String(t.data).replace('T', ' '), [t.tipo, t.tipo === 'BUY' ? 'up' : 'dn'], num(t.entrada), num(t.saida), [num(t.lucro, 4), cls(t.lucro)], t.motivo])));
+  const near = [...s.near_trade_logs].reverse().map(n => `${n.data} | ${num(n.price_btc)} | ${n.reason}`);
+  $('#tNear').replaceChildren(...near.map(t => Object.assign(document.createElement('div'), {textContent: t})));
+
+  const c = s.confluence || {}, el = $('#confl'); el.replaceChildren();
+  Object.entries(c).filter(([k]) => k !== 'veredito').forEach(([k, ok]) =>
+    el.append(Object.assign(document.createElement('span'), {textContent: `${ok ? '✔' : '✖'} ${k}`, className: ok ? 'up' : 'dn'})));
+  el.append(Object.assign(document.createElement('span'), {textContent: c.veredito || 'Aguardando confluência', className: 'warn', style: 'margin-left:auto'}));
+}
+function row(cells) {
+  const tr = document.createElement('tr');
+  cells.forEach(c => { const td = document.createElement('td'); if (Array.isArray(c)) { td.textContent = c[0]; td.className = c[1]; } else td.textContent = c; tr.append(td); });
+  return tr;
+}
+function drawMonthly(s) {
+  const m = s.monthly_profit, n = s.trades_count_db;
+  setK('#mLucro', brl(m), cls(m)); setK('#mTr', n); setK('#mSes', s.sessions_count);
+  setK('#mBest', brl(s.best_day, 4), cls(s.best_day)); setK('#mWorst', brl(s.worst_day, 4), cls(s.worst_day));
+  setK('#mAvg', brl(n ? m / n : 0, 4), cls(m));
+  const d = s.daily || [];
+  $('#tDaily').replaceChildren(...[...d].reverse().map((r, i, a) => {
+    const prev = a[i + 1], up = prev ? r.lucro_dia >= prev.lucro_dia : r.lucro_dia >= 0;
+    return row([r.data, r.total_trades, [num(r.lucro_dia, 4), cls(r.lucro_dia)], brl(r.saldo_final), [up ? '↑' : '↓', up ? 'up' : 'dn']]);
+  }));
+  $('#mDet').innerHTML = '';
+  const sec = (title, items) => {
+    const h = document.createElement('h4'); h.textContent = `== ${title} ==`;
+    const g = document.createElement('div'); items.forEach(i => g.append(Object.assign(document.createElement('span'), {textContent: i})));
+    $('#mDet').append(h, g);
+  };
+  sec('PERFORMANCE GERAL', [`Win Rate: ${num(s.win_rate * 100)}%`, `Profit Factor: ${num(s.profit_factor, 4)}`, `Drawdown Máx: ${num(s.drawdown_max_pct, 4)}%`, `Trades Lucrativos: ${s.trades_lucrativos}`, `Trades Prejuízo: ${s.trades_prejuizo}`]);
+  sec('MÉDIAS E EXPECTÂNCIA', [`Avg Gain: ${brl(s.avg_gain, 4)}`, `Avg Loss: ${brl(s.avg_loss, 4)}`, `Expectância: ${brl(s.expectancy, 4)}`]);
+  sec('SALDO E EXPOSIÇÃO', [`Equity: ${brl(s.equity_brl, 4)}`, `Lucro Hoje: ${brl(s.lucro_hoje_brl, 4)}`, `Reserva Segura: ${brl(s.safe_reserve_brl, 4)}`, `Exposição Atual: ${num(s.current_exposure_pct)}%`]);
+  let acc = 0; const cum = d.map(r => acc += r.lucro_dia), x = d.map(r => r.data.slice(5));
+  plot('c-month', [{x, y: d.map(r => r.lucro_dia), type: 'bar', marker: {color: d.map(r => r.lucro_dia >= 0 ? '#00e676' : '#ff5252')}, name: 'Dia'},
+    {x, y: cum, type: 'scatter', mode: 'lines+markers', line: {color: '#29b6f6', width: 2}, name: 'Acumulado'}]);
+}
+
+/* ---------- API ---------- */
+async function act(action, value) {
+  try {
+    const r = await fetch(URLS.action, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf()}, body: JSON.stringify({action, value})});
+    const j = await r.json();
+    if (!j.ok) addLog(`[ERR] ${j.msg}`);
+    poll(true);
+  } catch (e) { addLog('[ERR] Servidor indisponível: ' + e.message); }
+}
+let timer;
+async function poll(now = false) {
+  clearTimeout(timer);
+  try {
+    const full = tab !== 'trading' ? '&full=1' : '';
+    const r = await fetch(`${URLS.state}?since=${since}${full}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const s = await r.json();
+    s.logs.forEach(l => addLog(l.text)); since = s.last_seq;
+    render(s);
+  } catch (e) { $('#online').className = 'dot off'; }
+  timer = setTimeout(poll, 1000);
+}
+
+/* ---------- Eventos ---------- */
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.screen').forEach(x => x.classList.toggle('active', x.id === 's-' + tab));
+  poll();
+});
+$('#bStart').onclick = () => act('start');
+$('#bStop').onclick = () => act('stop');
+$('#g-mode').onclick = e => { const v = e.target.dataset.v; if (!v) return;
+  if (v === 'real' && !confirm('Ativar modo REAL? Ordens reais serão enviadas à Binance.')) return; act('mode', v); };
+$('#g-tm').onclick = e => e.target.dataset.v && act('trading_mode', e.target.dataset.v);
+$('#profile').onchange = e => act('profile', e.target.value);
+$('#acc').onchange = e => act('accumulate', e.target.checked);
+poll();
+</script>
+</body>
+</html>
