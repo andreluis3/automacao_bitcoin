@@ -1,0 +1,10 @@
+2026-09-30 20:58:54 | [ORDER] BUY | BTC/BRL | Preço=R$434,238.00 | Qtd=0.00019325 BTC | Valor=R$84.00 | Taxa=R$0.0840 | Motivo=lateral_banda_inferior (pos=0.85) | Status=EXECUTADA
+2026-09-30 20:58:56 | [ORDER] SELL | BTC/BRL | Preço=R$434,238.00 | Qtd=0.00019325 BTC | Valor=R$83.83 | Taxa=R$0.0839 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-09-30 20:59:56 | [ORDER] BUY | BTC/BRL | Preço=R$434,156.00 | Qtd=0.00019318 BTC | Valor=R$83.95 | Taxa=R$0.0840 | Motivo=lateral_banda_inferior (pos=-0.15) | Status=EXECUTADA
+2026-09-30 20:59:58 | [ORDER] SELL | BTC/BRL | Preço=R$434,276.00 | Qtd=0.00019318 BTC | Valor=R$83.81 | Taxa=R$0.0839 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-09-30 21:00:58 | [ORDER] BUY | BTC/BRL | Preço=R$434,195.00 | Qtd=0.00019307 BTC | Valor=R$83.91 | Taxa=R$0.0839 | Motivo=lateral_banda_inferior (pos=0.84) | Status=EXECUTADA
+2026-09-30 21:01:00 | [ORDER] SELL | BTC/BRL | Preço=R$434,195.00 | Qtd=0.00019307 BTC | Valor=R$83.74 | Taxa=R$0.0838 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-10-01 05:56:33 | [ORDER] BUY | BTC/BRL | Preço=R$433,845.00 | Qtd=0.00009932 BTC | Valor=R$43.13 | Taxa=R$0.0431 | Motivo=breakout_squeeze_entrada | Status=EXECUTADA
+2026-10-01 05:56:37 | [ORDER] SELL | BTC/BRL | Preço=R$433,845.00 | Qtd=0.00009932 BTC | Valor=R$43.04 | Taxa=R$0.0431 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
+2026-10-01 05:57:34 | [ORDER] BUY | BTC/BRL | Preço=R$434,182.00 | Qtd=0.00033070 BTC | Valor=R$143.73 | Taxa=R$0.1437 | Motivo=pullback_tendencia_entrada | Status=EXECUTADA
+2026-10-01 05:58:51 | [ORDER] SELL | BTC/BRL | Preço=R$434,270.00 | Qtd=0.00033070 BTC | Valor=R$143.47 | Taxa=R$0.1436 | Motivo=SIGNAL_EXIT | Status=EXECUTADA
